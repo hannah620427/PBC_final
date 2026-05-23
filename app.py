@@ -673,32 +673,34 @@ class AdhocDialog(ctk.CTkToplevel):
     def __init__(self, app, today: date, on_done):
         super().__init__(app)
         self.title("Add Ad-Hoc Task")
-        self.geometry("420x460")
+        self.geometry("460x580")
         self.resizable(False, False)
         self.grab_set()
         self.configure(fg_color=BG)
         self._app     = app
         self._today   = today
         self._on_done = on_done
+        self._subtasks: List[Dict] = []
         self._build()
 
     def _build(self):
-        heading(self, "New Ad-Hoc Task", size=16).pack(
-            pady=(20, 4), padx=20, anchor="w")
-        body_label(self, "Added directly to today's schedule.",
-                   color=T2, size=12).pack(padx=20, anchor="w")
-        Divider(self).pack(fill="x", padx=20, pady=12)
+        scroll = ctk.CTkScrollableFrame(self, fg_color=BG)
+        scroll.pack(fill="both", expand=True, padx=20, pady=(16, 0))
 
-        form = ctk.CTkFrame(self, fg_color="transparent")
-        form.pack(fill="x", padx=20)
+        heading(scroll, "New Ad-Hoc Task", size=16).pack(
+            pady=(0, 4), anchor="w")
+        body_label(scroll, "Added directly to today's schedule.",
+                   color=T2, size=12).pack(anchor="w")
+        Divider(scroll).pack(fill="x", pady=12)
 
-        section_label(form, "TASK NAME").pack(anchor="w")
-        self._name = ctk.CTkEntry(form, height=36, font=ctk.CTkFont(size=13),
+        # 直接把元件裝進 scroll，不套疊 form
+        section_label(scroll, "TASK NAME").pack(anchor="w")
+        self._name = ctk.CTkEntry(scroll, height=36, font=ctk.CTkFont(size=13),
                                    fg_color=CARD, border_color=BORDER,
                                    text_color=T1)
         self._name.pack(fill="x", pady=(2, 10))
 
-        row = ctk.CTkFrame(form, fg_color="transparent")
+        row = ctk.CTkFrame(scroll, fg_color="transparent")
         row.pack(fill="x", pady=(0, 10))
 
         col1 = ctk.CTkFrame(row, fg_color="transparent")
@@ -722,21 +724,72 @@ class AdhocDialog(ctk.CTkToplevel):
                       command=lambda v: self._urg_lbl.configure(
                           text=f"{int(v)} / 5")).pack(fill="x")
 
-        section_label(form, "IMPORTANCE").pack(anchor="w", pady=(6, 0))
+        section_label(scroll, "IMPORTANCE").pack(anchor="w", pady=(6, 0))
         self._imp_var = tk.IntVar(value=3)
-        self._imp_lbl = body_label(form, "3 / 5", color=T2, size=11)
+        self._imp_lbl = body_label(scroll, "3 / 5", color=T2, size=11)
         self._imp_lbl.pack(anchor="w")
-        ctk.CTkSlider(form, from_=1, to=5, number_of_steps=4,
+        ctk.CTkSlider(scroll, from_=1, to=5, number_of_steps=4,
                       variable=self._imp_var, button_color=T1,
                       progress_color=T1,
                       command=lambda v: self._imp_lbl.configure(
-                          text=f"{int(v)} / 5")).pack(fill="x",
-                                                       pady=(0, 12))
+                          text=f"{int(v)} / 5")).pack(fill="x", pady=(0, 12))
 
+        # ── 新增：子任務輸入區塊 ──
+        section_label(scroll, "SUB-TASKS").pack(anchor="w", pady=(4, 0))
+
+        # 修正：把「輸入框」排在「清單」上面，徹底解決捲軸被空白撐開的 Bug
+        sub_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        sub_row.pack(fill="x", pady=(4, 6))
+        
+        self._sub_entry = ctk.CTkEntry(sub_row, height=32,
+                                        font=ctk.CTkFont(size=12),
+                                        placeholder_text="Sub-task name",
+                                        fg_color=CARD, border_color=BORDER,
+                                        text_color=T1)
+        self._sub_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        
+        self._sub_mins = ctk.CTkEntry(sub_row, width=80, height=32,
+                                       font=ctk.CTkFont(size=12),
+                                       placeholder_text="min",
+                                       fg_color=CARD, border_color=BORDER,
+                                       text_color=T1)
+        self._sub_mins.pack(side="left", padx=(0, 6))
+        
+        ctk.CTkButton(sub_row, text="+", width=32, height=32,
+                      fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
+                      font=ctk.CTkFont(size=14),
+                      command=self._add_subtask).pack(side="left")
+
+        # 裝已新增子任務的容器放在最底部
+        self._sub_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        self._sub_frame.pack(fill="x", pady=(0, 10))
+        # ────────────────────────
+
+        # Add Task 按鈕放在 scroll 外面，讓它永遠固定在視窗最底端
         ctk.CTkButton(self, text="Add Task",
                       fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
                       font=ctk.CTkFont(size=13), height=40,
                       command=self._save).pack(pady=16, padx=20, fill="x")
+
+    def _add_subtask(self):
+        name = self._sub_entry.get().strip()
+        mins_raw = self._sub_mins.get().strip()
+        if not name:
+            return
+        try:
+            mins = float(mins_raw)
+        except ValueError:
+            mins = 30.0  # 若未填寫時間，預設為 30 分鐘
+            
+        self._subtasks.append({"name": name, "minutes": mins})
+        
+        # 稍微加一點 pady，讓條列起來更好看
+        body_label(self._sub_frame,
+                   f"  ·  {name}  ({mins:.0f}m)",
+                   color=T2, size=12).pack(anchor="w", pady=2)
+                   
+        self._sub_entry.delete(0, "end")
+        self._sub_mins.delete(0, "end")
 
     def _save(self):
         name = self._name.get().strip()
@@ -768,10 +821,17 @@ class AdhocDialog(ctk.CTkToplevel):
                     deadline=self._today, quadrant=q, priority_score=sc,
                     source="adhoc", week_start=week_start)
         tid  = db.insert_task(task)
+        
+        # 將收集到的子任務寫入資料庫
+        for i, s in enumerate(self._subtasks):
+            db.insert_subtask(Subtask(id=None, task_id=tid,
+                                      name=s["name"],
+                                      estimated_minutes=s["minutes"],
+                                      order_index=i))
+
         db.insert_schedule_entry(week_start, self._today, tid, hours * 60)
         self.destroy()
         self._on_done()
-        
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ① 新增 EditTaskDialog 類別
 #    貼在 AdhocDialog 類別的最後一行之後（on_done() 那行），
@@ -1226,19 +1286,16 @@ class AddTaskDialog(ctk.CTkToplevel):
 
         # Deadline
         section_label(scroll, "DEADLINE").pack(anchor="w")
-        
-        # ---- 修改：改用 tkcalendar 的 DateEntry 月曆元件 ----
         self._deadline_entry = DateEntry(
             scroll, 
             width=16,
-            background="#1A1A1A",      # 配合你們深色按鈕的顏色
+            background="#1A1A1A",
             foreground="white", 
             borderwidth=0,
             font=("Arial", 12), 
-            date_pattern="yyyy-mm-dd", # 設定日期顯示格式
-            selectbackground="#2C7A45" # 配合你們的 OK_CLR 綠色
+            date_pattern="yyyy-mm-dd",
+            selectbackground="#2C7A45"
         )
-        # 預設選取 4 天後的日期（維持你們原本的預設邏輯）
         self._deadline_entry.set_date(date.today() + timedelta(days=4))
         self._deadline_entry.pack(anchor="w", pady=(2, 10))
 
@@ -1250,30 +1307,37 @@ class AddTaskDialog(ctk.CTkToplevel):
                                     text_color=T1)
         self._notes.pack(fill="x", pady=(2, 10))
 
-        # Subtasks
+        # ── 修正：子任務區域 ──
         section_label(scroll, "SUB-TASKS").pack(anchor="w", pady=(4, 0))
-        self._sub_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-        self._sub_frame.pack(fill="x")
 
+        # 1. 先放輸入框，避免被下面的空 Frame 撐到底部
         sub_row = ctk.CTkFrame(scroll, fg_color="transparent")
-        sub_row.pack(fill="x", pady=(4, 0))
+        sub_row.pack(fill="x", pady=(4, 6))
         self._sub_entry = ctk.CTkEntry(sub_row, height=32,
                                         font=ctk.CTkFont(size=12),
                                         placeholder_text="Sub-task name",
                                         fg_color=CARD, border_color=BORDER,
                                         text_color=T1)
         self._sub_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        
         self._sub_mins = ctk.CTkEntry(sub_row, width=80, height=32,
                                        font=ctk.CTkFont(size=12),
                                        placeholder_text="min",
                                        fg_color=CARD, border_color=BORDER,
                                        text_color=T1)
         self._sub_mins.pack(side="left", padx=(0, 6))
+        
         ctk.CTkButton(sub_row, text="+", width=32, height=32,
                       fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
                       font=ctk.CTkFont(size=14),
                       command=self._add_subtask).pack(side="left")
 
+        # 2. 再放裝已新增子任務的容器，讓清單往下長
+        self._sub_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        self._sub_frame.pack(fill="x", pady=(0, 10))
+        # ────────────────────────
+
+        # Save Task 按鈕留在外層 (scroll 之外)，固定在視窗最下方
         ctk.CTkButton(self, text="Save Task",
                       fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
                       font=ctk.CTkFont(size=13), height=42,
@@ -1308,9 +1372,12 @@ class AddTaskDialog(ctk.CTkToplevel):
         except ValueError:
             mins = 30.0
         self._subtasks.append({"name": name, "minutes": mins})
+        
+        # 稍微加一點 pady 讓排版更好看
         body_label(self._sub_frame,
                    f"  ·  {name}  ({mins:.0f}m)",
-                   color=T2, size=11).pack(anchor="w")
+                   color=T2, size=11).pack(anchor="w", pady=2)
+                   
         self._sub_entry.delete(0, "end")
         self._sub_mins.delete(0, "end")
 
@@ -1330,7 +1397,6 @@ class AddTaskDialog(ctk.CTkToplevel):
                 f"'{name}' already exists this week.", parent=self)
             return
 
-        # ---- 修改：直接從月曆元件獲取日期物件 ----
         dl  = self._deadline_entry.get_date()
         urg = int(self._urg_var.get())
         imp = int(self._imp_var.get())
@@ -1353,7 +1419,7 @@ class AddTaskDialog(ctk.CTkToplevel):
 
         # Auto-generate schedule
         tasks = db.get_all_tasks(week_start=self._week_start, completed=False)
-        work_days   = [self._week_start + timedelta(days=i) for i in range(7)] # 改成一周7天
+        work_days   = [self._week_start + timedelta(days=i) for i in range(7)] 
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
         try:
             alloc = scheduler.allocate_weekly(tasks, self._week_start,
@@ -1368,7 +1434,6 @@ class AddTaskDialog(ctk.CTkToplevel):
 
         self.destroy()
         self._on_done()
-
 
 # ── Term View ─────────────────────────────────────────────────────────────────
 
