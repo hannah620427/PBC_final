@@ -335,14 +335,21 @@ def handle_completions(
 
         if t.subtasks:
             pending = [s for s in t.subtasks if not s.completed]
+            completed_any_subtask = False  # 新增一個標記，確認有沒有真的完成子任務
+            
             for st in pending:
                 ans = input(f"    Subtask '{st.name}' complete? (y/n): ").strip().lower()
                 if ans == "y":
                     db.mark_subtask_complete(st.id, st.estimated_minutes)
                     st.completed = True
-                    t.remaining_minutes = max(
-                        0.0, t.remaining_minutes - st.estimated_minutes)
-                    db.update_remaining_minutes(t.id, t.remaining_minutes)
+                    # 安全扣除：先在記憶體裡扣，確保不會小於 0
+                    t.remaining_minutes = max(0.0, t.remaining_minutes - st.estimated_minutes)
+                    completed_any_subtask = True
+            
+            # 等所有子任務都問完一輪後，再一次性寫入資料庫，避免連續存取造成的錯誤
+            if completed_any_subtask:
+                db.update_remaining_minutes(t.id, t.remaining_minutes)
+                
             all_done = all(s.completed for s in t.subtasks)
         else:
             ans      = input(f"    Task fully complete? (y/n): ").strip().lower()
@@ -480,9 +487,17 @@ def _simulate_day_complete(today: date) -> int:
         for st in t.subtasks:
             if not st.completed:
                 db.mark_subtask_complete(st.id, st.estimated_minutes)
+        
+        # --- 👇 新增：確保大任務的剩餘時間徹底歸零 👇 ---
+        # 先把時間加進模擬的總專注時間裡
+        total_sim_minutes += int(t.remaining_minutes) 
+        # 然後把剩餘時間歸零，並寫回資料庫
+        t.remaining_minutes = 0.0  
+        db.update_remaining_minutes(t.id, 0.0) 
+        # --- 👆 新增結束 👆 ---
+        
         # Complete the task itself
         db.mark_task_complete(t.id)
-        total_sim_minutes += int(t.remaining_minutes)
 
     # Mark all today's blocks complete
     blocks = db.get_blocks_for_date(today)

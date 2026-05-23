@@ -634,7 +634,7 @@ class AdhocDialog(ctk.CTkToplevel):
     def __init__(self, app, today: date, on_done):
         super().__init__(app)
         self.title("Add Ad-Hoc Task")
-        self.geometry("420x460")
+        self.geometry("400x650")
         self.resizable(False, False)
         self.grab_set()
         self.configure(fg_color=BG)
@@ -691,28 +691,87 @@ class AdhocDialog(ctk.CTkToplevel):
                       variable=self._imp_var, button_color=T1,
                       progress_color=T1,
                       command=lambda v: self._imp_lbl.configure(
-                          text=f"{int(v)} / 5")).pack(fill="x",
-                                                       pady=(0, 12))
+                          text=f"{int(v)} / 5")).pack(fill="x", pady=(0, 12))
+
+        # --- 👇 這是我們幫詠祺加的新功能：子任務區塊 👇 ---
+        section_label(form, "SUBTASKS (Optional)").pack(anchor="w")
+        
+        # 用來裝子任務輸入框的容器
+        self._subtasks_frame = ctk.CTkFrame(form, fg_color="transparent")
+        self._subtasks_frame.pack(fill="x", pady=(2, 5))
+        
+        # 用一個列表來記住所有的子任務輸入框，存檔時才抓得到資料
+        self._subtask_widgets = []
+
+        # 新增子任務的按鈕
+        ctk.CTkButton(form, text="+ Add Subtask", width=100, height=28,
+                      fg_color="transparent", hover_color=BORDER, text_color=T1,
+                      font=ctk.CTkFont(size=12), border_width=1, border_color=BORDER,
+                      command=self._add_subtask_row).pack(anchor="w", pady=(0, 10))
+        # --- 👆 新增結束 👆 ---
 
         ctk.CTkButton(self, text="Add Task",
                       fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
                       font=ctk.CTkFont(size=13), height=40,
                       command=self._save).pack(pady=16, padx=20, fill="x")
+        
+    def _add_subtask_row(self):
+        """動態新增一行子任務輸入框"""
+        row = ctk.CTkFrame(self._subtasks_frame, fg_color="transparent")
+        row.pack(fill="x", pady=2)
+
+        # 子任務名稱
+        name_ent = ctk.CTkEntry(row, placeholder_text="Subtask name",
+                                height=30, fg_color=CARD, border_color=BORDER, text_color=T1)
+        name_ent.pack(side="left", expand=True, fill="x", padx=(0, 5))
+
+        # 子任務時間(分鐘)
+        min_ent = ctk.CTkEntry(row, placeholder_text="Mins", width=60,
+                               height=30, fg_color=CARD, border_color=BORDER, text_color=T1)
+        min_ent.pack(side="left")
+
+        # 把這兩個框框記下來，之後 _save 的時候要讀取
+        self._subtask_widgets.append((name_ent, min_ent))
 
     def _save(self):
         name = self._name.get().strip()
         if not name:
+            from tkinter import messagebox
             messagebox.showwarning("Missing", "Task name is required.", parent=self)
             return
         try:
             hours = float(self._hours.get())
         except ValueError:
+            from tkinter import messagebox
             messagebox.showwarning("Invalid", "Hours must be a number.", parent=self)
             return
+
+        # --- 👇 新增：讀取並檢查子任務 👇 ---
+        valid_subtasks = []
+        total_sub_mins = 0.0
+        
+        # 確認我們有建立子任務列表（防呆機制）
+        if hasattr(self, '_subtask_widgets'):
+            for i, (name_ent, min_ent) in enumerate(self._subtask_widgets):
+                s_name = name_ent.get().strip()
+                s_min_str = min_ent.get().strip()
+                
+                # 如果名稱和時間都有填寫，才視為有效的子任務
+                if s_name and s_min_str:
+                    try:
+                        s_min = float(s_min_str)
+                        valid_subtasks.append((s_name, s_min, i))
+                        total_sub_mins += s_min
+                    except ValueError:
+                        from tkinter import messagebox
+                        messagebox.showwarning("Invalid", f"Subtask '{s_name}' minutes must be a number.", parent=self)
+                        return
+        # --- 👆 新增結束 👆 ---
 
         week_start = self._today - timedelta(days=self._today.weekday())
         existing   = db.task_in_week_by_name(name, week_start)
         if existing:
+            from tkinter import messagebox
             if not messagebox.askyesno(
                     "Duplicate",
                     f"'{name}' already exists this week.\n"
@@ -724,12 +783,32 @@ class AdhocDialog(ctk.CTkToplevel):
         imp  = int(self._imp_var.get())
         q    = scheduler.classify_quadrant(urg, imp)
         sc   = scheduler.compute_priority_score(urg, imp, q, self._today)
+        
+        # 💡 自動校正：如果子任務加起來超過原本設定的小時數，就以子任務為主
+        final_minutes = hours * 60
+        final_hours = hours
+        if total_sub_mins > final_minutes:
+            final_minutes = total_sub_mins
+            final_hours = final_minutes / 60.0
+
+        # 注意：這裡使用了 final_hours 和 final_minutes
         task = Task(id=None, name=name, urgency=urg, importance=imp,
-                    time_allocation=hours, remaining_minutes=hours * 60,
+                    time_allocation=final_hours, remaining_minutes=final_minutes,
                     deadline=self._today, quadrant=q, priority_score=sc,
                     source="adhoc", week_start=week_start)
         tid  = db.insert_task(task)
-        db.insert_schedule_entry(week_start, self._today, tid, hours * 60)
+        
+        # --- 👇 新增：將子任務寫入資料庫 👇 ---
+        # 為了避免這個檔案最上面沒有 import Subtask，我們直接從 models 引入
+        from models import Subtask 
+        
+        for s_name, s_min, idx in valid_subtasks:
+            sub = Subtask(id=None, task_id=tid, name=s_name,
+                          estimated_minutes=s_min, order_index=idx)
+            db.insert_subtask(sub)
+        # --- 👆 新增結束 👆 ---
+
+        db.insert_schedule_entry(week_start, self._today, tid, final_minutes)
         self.destroy()
         self._on_done()
 
