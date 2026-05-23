@@ -1084,10 +1084,23 @@ class WeeklyView(ctk.CTkFrame):
                 t_card = card_frame(self._task_list_scroll)
                 t_card.pack(fill="x", pady=4)
                 
-                # 任務名稱
-                body_label(t_card, t.name, size=13).pack(anchor="w", padx=12, pady=(8, 2))
+                # ---- 修改：建立第一列 (包含任務名稱與編輯按鈕) ----
+                top_row = ctk.CTkFrame(t_card, fg_color="transparent")
+                top_row.pack(fill="x", padx=12, pady=(8, 2))
                 
-                # 死線與剩餘時間排在同一行
+                # 任務名稱 (靠左)
+                body_label(top_row, t.name, size=13).pack(side="left")
+                
+                # ⋯ 編輯按鈕 (靠右)，點擊後開啟 EditTaskDialog
+                ctk.CTkButton(
+                    top_row, text="⋯", width=28, height=24,
+                    fg_color="transparent", hover_color=ARC_BG,
+                    text_color=T2, font=ctk.CTkFont(size=14),
+                    corner_radius=6,
+                    command=lambda task=t: EditTaskDialog(self._app, task, self.refresh)
+                ).pack(side="right")
+                
+                # ---- 死線與剩餘時間排在第二列 (維持原樣) ----
                 info_row = ctk.CTkFrame(t_card, fg_color="transparent")
                 info_row.pack(fill="x", padx=12, pady=(0, 8))
                 
@@ -1100,11 +1113,19 @@ class WeeklyView(ctk.CTkFrame):
         AddTaskDialog(self._app, self._app.week_start, self.refresh)
 
     def _regen(self):
-        # ---- 新增：安全讀取並更新全域讀書時數 (防呆機制) ----
+        # ---- 新增：安全讀取並更新全域讀書時數 (防呆與記憶機制) ----
         try:
             h_val = float(self._hours_var.get())
             if 0.1 <= h_val <= 24.0:
                 self._app.hours_per_day = h_val
+                self._hours_var.set(f"{h_val:g}") # 存檔後自動將介面格式化
+                
+                # 將最新的時數設定同步寫入本地文字檔
+                try:
+                    with open("data/config.txt", "w", encoding="utf-8") as f:
+                        f.write(str(h_val))
+                except Exception:
+                    pass
             else:
                 self._hours_var.set(f"{self._app.hours_per_day:g}")
         except ValueError:
@@ -1791,7 +1812,21 @@ class App(ctk.CTk):
 
         self.today      = date.today()
         self.week_start = week_start_of(self.today)
-        self.hours_per_day = 8.0  # 新增：預設每日可讀書時數 (可隨時被介面更改)
+
+        # 預設每日可讀書時數
+        self.hours_per_day = 8.0  
+        
+        # 嘗試從本地檔案讀取上一次儲存的設定值
+        try:
+            import os
+            os.makedirs("data", exist_ok=True)
+            if os.path.exists("data/config.txt"):
+                with open("data/config.txt", "r", encoding="utf-8") as f:
+                    val = float(f.read().strip())
+                    if 0.1 <= val <= 24.0:
+                        self.hours_per_day = val
+        except Exception:
+            self.hours_per_day = 8.0
 
         # Timer state
         self._timer_active  = False
