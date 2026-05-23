@@ -288,7 +288,7 @@ class ReportWindow(ctk.CTkToplevel):
                             font=ctk.CTkFont(size=12), text_color=T1,
                             fg_color=T1).pack(pady=(14, 4), padx=20, anchor="w")
 
-        body_label(self, f"Total focus today:  {focus_min}m",
+        body_label(self, f"Total focus today:  {self.focus}m",
                    color=T2, size=12).pack(pady=(8, 0))
 
         ctk.CTkButton(self, text="Close & Advance to Tomorrow",
@@ -366,6 +366,16 @@ class TimerPanel(ctk.CTkFrame):
                                unselected_color=BORDER,
                                text_color="#FFF",
                                unselected_hover_color=ARC_BG).pack(side="left")
+        # ---- 新增：最小切片時間變數與介面元件 ----
+        self._min_slice_var = ctk.StringVar(value="10")  # 預設 10 分鐘
+        
+        # 建立文字標籤
+        min_slice_label = ctk.CTkLabel(cfg, text="Min Slice (min):", font=ctk.CTkFont(family="Arial", size=12), text_color=T2)
+        min_slice_label.pack(side="left", padx=(15, 5))
+        
+        # 建立輸入框
+        self._min_slice_entry = ctk.CTkEntry(cfg, width=50, textvariable=self._min_slice_var, justify="center")
+        self._min_slice_entry.pack(side="left", padx=5)
 
         # ── Timer card ────────────────────────────────────────────────────
         timer_card = card_frame(self)
@@ -444,7 +454,16 @@ class TimerPanel(ctk.CTkFrame):
         brk    = int(self._brk_var.get())
         mode   = (SplitMode.CHUNK if self._mode_var.get() == "Chunk"
                   else SplitMode.SANDWICH)
-        blocks = scheduler.build_daily_blocks(slices, focus, brk, mode)
+        # ---- 修改：獲取使用者輸入的最小切片時間 ----
+        try:
+            min_slice = int(self._min_slice_var.get())
+            if min_slice <= 0:
+                min_slice = 10
+        except ValueError:
+            min_slice = 10
+
+        blocks = scheduler.build_daily_blocks(slices, focus, brk, mode, min_slice_minutes=min_slice)
+        
         for i, b in enumerate(blocks):
             b.block_date  = self._app.today
             b.block_index = i
@@ -1109,7 +1128,7 @@ class AddTaskDialog(ctk.CTkToplevel):
         section_label(scroll, "ESTIMATED HOURS").pack(anchor="w")
 
         # Try to pull difficulty suggestion
-        last_week  = week_start - timedelta(weeks=1)
+        last_week  = self._week_start - timedelta(weeks=1)
         prev_tasks = db.get_tasks_from_week(last_week)
         self._prev_map = {t.name.lower(): t for t in prev_tasks}
         self._name.bind("<FocusOut>", self._on_name_blur)
