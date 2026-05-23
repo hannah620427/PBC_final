@@ -951,17 +951,35 @@ class WeeklyView(ctk.CTkFrame):
                       fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
                       font=ctk.CTkFont(size=12), corner_radius=8,
                       command=self._add_task).pack(side="right", padx=8)
+        # ---- 新增：每日讀書時數輸入元件 ----
+        self._hours_var = ctk.StringVar(value=f"{self._app.hours_per_day:g}")
+
+        # 建立小輸入框 (稍微加寬到 55，方便清楚輸入小數點)
+        hours_entry = ctk.CTkEntry(hdr, width=55, textvariable=self._hours_var, justify="center")
+        hours_entry.pack(side="right", padx=(0, 16))
+
+        # 建立提示標籤 (修改文案為 Default Hrs/Day)
+        hours_label = body_label(hdr, "Default Hrs/Day:", color=T2, size=12)
+        hours_label.pack(side="right", padx=4)
 
         Divider(self).pack(fill="x", padx=28, pady=12)
 
         body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
         body.pack(fill="both", expand=True, padx=28, pady=(0, 20))
-        body.columnconfigure(0, weight=1)
+        # ---- 修改：將畫面切分為左右兩欄 (比例 3:1) ----
+        body.columnconfigure(0, weight=3) # 左側排程佔 3 份
+        body.columnconfigure(1, weight=1) # 右側清單佔 1 份
         body.rowconfigure(0, weight=1)
 
+        # 左側：每日排程區塊
         self._schedule_scroll = ctk.CTkScrollableFrame(
             body, fg_color=BG, scrollbar_button_color=BORDER)
-        self._schedule_scroll.grid(row=0, column=0, sticky="nsew")
+        self._schedule_scroll.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+
+        # 右側：所有代辦事項清單區塊
+        self._task_list_scroll = ctk.CTkScrollableFrame(
+            body, fg_color=BG, scrollbar_button_color=BORDER)
+        self._task_list_scroll.grid(row=0, column=1, sticky="nsew")
 
     def refresh(self):
         ws = self._app.week_start
@@ -1044,22 +1062,64 @@ class WeeklyView(ctk.CTkFrame):
 
             ctk.CTkFrame(day_card, height=8,
                          fg_color="transparent").pack()
+            
+            # ==========================================
+        # ---- 新增：更新右側「代辦事項清單」資料 ----
+        # ==========================================
+        for w in self._task_list_scroll.winfo_children():
+            w.destroy()
+            
+        section_label(self._task_list_scroll, "TASKS & DEADLINES").pack(anchor="w", pady=(12, 8))
+        
+        # 取得本週所有未完成任務
+        tasks = db.get_all_tasks(week_start=ws, completed=False)
+        
+        if not tasks:
+            body_label(self._task_list_scroll, "No pending tasks.", color=T2).pack(pady=10)
+        else:
+            # 自動依照死線 (Deadline) 進行排序，越急的排越上面
+            tasks_sorted = sorted(tasks, key=lambda x: x.deadline)
+            
+            for t in tasks_sorted:
+                t_card = card_frame(self._task_list_scroll)
+                t_card.pack(fill="x", pady=4)
+                
+                # 任務名稱
+                body_label(t_card, t.name, size=13).pack(anchor="w", padx=12, pady=(8, 2))
+                
+                # 死線與剩餘時間排在同一行
+                info_row = ctk.CTkFrame(t_card, fg_color="transparent")
+                info_row.pack(fill="x", padx=12, pady=(0, 8))
+                
+                dl_str = t.deadline.strftime('%b %d (%a)')
+                # 死線使用警告色 (ERR_CLR) 標示
+                body_label(info_row, f"DL: {dl_str}", color=ERR_CLR, size=11).pack(side="left")
+                body_label(info_row, f"{t.remaining_minutes:.0f}m left", color=T2, size=11).pack(side="right")
 
     def _add_task(self):
         AddTaskDialog(self._app, self._app.week_start, self.refresh)
 
     def _regen(self):
-        tasks = db.get_all_tasks(week_start=self._app.week_start,
-                                 completed=False)
+        # ---- 新增：安全讀取並更新全域讀書時數 (防呆機制) ----
+        try:
+            h_val = float(self._hours_var.get())
+            if 0.1 <= h_val <= 24.0:
+                self._app.hours_per_day = h_val
+            else:
+                self._hours_var.set(f"{self._app.hours_per_day:g}")
+        except ValueError:
+            self._hours_var.set(f"{self._app.hours_per_day:g}")
+
+        tasks = db.get_all_tasks(week_start=self._app.week_start, completed=False)
         if not tasks:
-            messagebox.showinfo("No Tasks",
-                                "Add tasks before generating a schedule.")
+            messagebox.showinfo("No Tasks", "Add tasks before generating a schedule.")
             return
-        work_days   = [self._app.week_start + timedelta(days=i) for i in range(7)] # 改成一周7天
+        work_days   = [self._app.week_start + timedelta(days=i) for i in range(7)]
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
         try:
+            # 將原本寫死的 8.0 成功改為動態讀取變数 self._app.hours_per_day
             alloc = scheduler.allocate_weekly(
-                tasks, self._app.week_start, 8.0, class_hours)
+                tasks, self._app.week_start, self._app.hours_per_day, class_hours)
         except scheduler.PomodoroDebtError as e:
             messagebox.showerror("Schedule Impossible", str(e))
             return
@@ -1276,7 +1336,7 @@ class AddTaskDialog(ctk.CTkToplevel):
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
         try:
             alloc = scheduler.allocate_weekly(tasks, self._week_start,
-                                              8.0, class_hours)
+                                              self._app.hours_per_day, class_hours)
             db.clear_schedule_for_week(self._week_start)
             for day_date, entries in alloc.items():
                 for task_id, minutes in entries:
@@ -1731,6 +1791,7 @@ class App(ctk.CTk):
 
         self.today      = date.today()
         self.week_start = week_start_of(self.today)
+        self.hours_per_day = 8.0  # 新增：預設每日可讀書時數 (可隨時被介面更改)
 
         # Timer state
         self._timer_active  = False
