@@ -41,7 +41,7 @@ MONTHS = ["Jan","Feb","Mar","Apr","May","Jun",
 
 # ── Utility ───────────────────────────────────────────────────────────────────
 def week_start_of(d: date) -> date:
-    return d - timedelta(days=d.weekday())
+    return date.today()  # 改成永遠從「今天」開始
 
 def fmt_sec(s: int) -> str:
     return f"{s // 60:02d}:{s % 60:02d}"
@@ -1055,7 +1055,7 @@ class WeeklyView(ctk.CTkFrame):
             messagebox.showinfo("No Tasks",
                                 "Add tasks before generating a schedule.")
             return
-        work_days   = [self._app.week_start + timedelta(days=i) for i in range(5)]
+        work_days   = [self._app.week_start + timedelta(days=i) for i in range(7)] # 改成一周7天
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
         try:
             alloc = scheduler.allocate_weekly(
@@ -1272,7 +1272,7 @@ class AddTaskDialog(ctk.CTkToplevel):
 
         # Auto-generate schedule
         tasks = db.get_all_tasks(week_start=self._week_start, completed=False)
-        work_days   = [self._week_start + timedelta(days=i) for i in range(5)]
+        work_days   = [self._week_start + timedelta(days=i) for i in range(7)] # 改成一周7天
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
         try:
             alloc = scheduler.allocate_weekly(tasks, self._week_start,
