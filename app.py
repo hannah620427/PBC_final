@@ -693,7 +693,7 @@ class AdhocDialog(ctk.CTkToplevel):
                       command=lambda v: self._imp_lbl.configure(
                           text=f"{int(v)} / 5")).pack(fill="x", pady=(0, 12))
 
-        # --- 👇 這是我們幫詠祺加的新功能：子任務區塊 👇 ---
+   
         section_label(form, "SUBTASKS (Optional)").pack(anchor="w")
         
         # 用來裝子任務輸入框的容器
