@@ -23,3 +23,5 @@ pyproject.toml
 # ==========================================
 data/*.db-journal
 data/*.db-wal
+
+data/planner.db
