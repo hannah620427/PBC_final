@@ -7,6 +7,7 @@ pip install customtkinter
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
+from tkcalendar import DateEntry
 import math
 from datetime import date, timedelta
 from typing import Optional, List, Dict
@@ -1144,18 +1145,21 @@ class AddTaskDialog(ctk.CTkToplevel):
 
         # Deadline
         section_label(scroll, "DEADLINE").pack(anchor="w")
-        days      = next_21_days()
-        day_strs  = [date_label(d) for d in days]
-        self._day_map = dict(zip(day_strs, days))
-        self._deadline_var = tk.StringVar(value=day_strs[4])
-        ctk.CTkOptionMenu(scroll, values=day_strs,
-                          variable=self._deadline_var,
-                          font=ctk.CTkFont(size=12),
-                          fg_color=CARD, button_color=T1,
-                          button_hover_color=SIDE_SEL,
-                          text_color=T1, dropdown_text_color=T1,
-                          dropdown_fg_color=CARD).pack(fill="x",
-                                                        pady=(2, 10))
+        
+        # ---- 修改：改用 tkcalendar 的 DateEntry 月曆元件 ----
+        self._deadline_entry = DateEntry(
+            scroll, 
+            width=16,
+            background="#1A1A1A",      # 配合你們深色按鈕的顏色
+            foreground="white", 
+            borderwidth=0,
+            font=("Arial", 12), 
+            date_pattern="yyyy-mm-dd", # 設定日期顯示格式
+            selectbackground="#2C7A45" # 配合你們的 OK_CLR 綠色
+        )
+        # 預設選取 4 天後的日期（維持你們原本的預設邏輯）
+        self._deadline_entry.set_date(date.today() + timedelta(days=4))
+        self._deadline_entry.pack(anchor="w", pady=(2, 10))
 
         # Notes
         section_label(scroll, "NOTES (optional)").pack(anchor="w")
@@ -1245,7 +1249,8 @@ class AddTaskDialog(ctk.CTkToplevel):
                 f"'{name}' already exists this week.", parent=self)
             return
 
-        dl  = self._day_map.get(self._deadline_var.get(), date.today())
+        # ---- 修改：直接從月曆元件獲取日期物件 ----
+        dl  = self._deadline_entry.get_date()
         urg = int(self._urg_var.get())
         imp = int(self._imp_var.get())
         q   = scheduler.classify_quadrant(urg, imp)
