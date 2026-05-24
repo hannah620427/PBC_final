@@ -1209,7 +1209,7 @@ class WeeklyView(ctk.CTkFrame):
         for e in entries:
             by_day.setdefault(e["day_date"], []).append(e)
 
-        work_days = [ws + timedelta(days=i) for i in range(5)]
+        work_days = [ws + timedelta(days=i) for i in range(7)]
 
         if not entries:
             msg = card_frame(self._schedule_scroll)

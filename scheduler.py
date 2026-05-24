@@ -86,29 +86,45 @@ def allocate_weekly(
 
     # 策略一：DEEP WORK (集中模式)
     if strategy == "deep_work":
-        sorted_tasks = sorted(tasks, key=lambda x: (-x.priority_score, x.deadline))
-        task_needs = {t.id: weekly_quota[t.id] for t in sorted_tasks}
+        task_needs = {t.id: weekly_quota[t.id] for t in tasks}
         
-        # 第一階段：盡可能塞滿低消
-        for t in sorted_tasks:
-            remaining = task_needs[t.id]
-            eligible_days = [d for d in work_days if d <= t.deadline] or work_days
-            
-            for day in eligible_days:
-                if remaining <= 0:
-                    break
-                if day_remaining[day] <= 0:
-                    continue
+        # 第一階段：保底與集中塞入 (以天為本位)
+        for current_day in work_days:
+            if day_remaining[current_day] <= 0:
+                continue
                 
-                alloc = min(remaining, day_remaining[day])
+            # A. 處理死線就在今天的任務 (無條件最優先，解決死線被霸凌的問題)
+            must_finish_today = [t for t in tasks if current_day == t.deadline and task_needs[t.id] > 0]
+            for t in must_finish_today:
+                need = task_needs[t.id]
+                if day_remaining[current_day] < need:
+                    missing = need - day_remaining[current_day]
+                    raise PomodoroDebtError(
+                        f"Schedule failed! Task '{t.name}' lacks {missing:.0f} mins on deadline."
+                    )
+                schedule[current_day].append((t.id, need))
+                day_remaining[current_day] -= need
+                task_needs[t.id] = 0.0
+
+            # B. 剩餘時間處理：找出還沒到期的任務
+            active_tasks = [t for t in tasks if task_needs[t.id] > 0 and current_day < t.deadline]
+            if not active_tasks or day_remaining[current_day] <= 0:
+                continue
+                
+            # Deep Work 核心：依照分數高低排序，由最高分者獨佔剩餘時間！
+            active_tasks.sort(key=lambda x: (-x.priority_score, x.deadline))
+            
+            for t in active_tasks:
+                if day_remaining[current_day] <= 0:
+                    break
+                alloc = min(day_remaining[current_day], task_needs[t.id])
                 if alloc > 0:
-                    schedule[day].append((t.id, alloc))
-                    day_remaining[day] -= alloc
-                    remaining -= alloc
-            task_needs[t.id] = remaining
+                    schedule[current_day].append((t.id, alloc))
+                    day_remaining[current_day] -= alloc
+                    task_needs[t.id] -= alloc
 
         # 檢驗階段：判斷報錯或產生軟性提醒
-        for t in sorted_tasks:
+        for t in tasks:
             days_until_dl = (t.deadline - start_date).days + 1
             if task_needs[t.id] > 0.5:
                 if days_until_dl <= 7:
@@ -120,33 +136,39 @@ def allocate_weekly(
                         f"Task '{t.name}' missed its weekly pacing target by {task_needs[t.id]:.0f} mins."
                     )
 
-        # 第二階段：填滿剩餘時間
-        pass2_needs = {t.id: max(0.0, t.remaining_minutes - weekly_quota[t.id]) for t in sorted_tasks}
-        for t in sorted_tasks:
-            remaining = pass2_needs[t.id]
-            if remaining <= 0:
+        # 第二階段：填滿剩餘時間 (提前推進遠期任務)
+        pass2_needs = {t.id: max(0.0, t.remaining_minutes - weekly_quota[t.id]) for t in tasks}
+        
+        for current_day in work_days:
+            if day_remaining[current_day] <= 0:
                 continue
-            eligible_days = [d for d in work_days if d <= t.deadline] or work_days
-            for day in eligible_days:
-                if remaining <= 0:
+                
+            active_tasks = [t for t in tasks if pass2_needs[t.id] > 0.5 and current_day <= t.deadline]
+            if not active_tasks:
+                continue
+                
+            # 一樣由最高分優先填補空檔
+            active_tasks.sort(key=lambda x: (-x.priority_score, x.deadline))
+            
+            for t in active_tasks:
+                if day_remaining[current_day] <= 0:
                     break
-                if day_remaining[day] <= 0:
-                    continue
-                alloc = min(remaining, day_remaining[day])
+                alloc = min(day_remaining[current_day], pass2_needs[t.id])
                 if alloc > 0:
+                    # 合併同一天內同一個任務的時數
                     found = False
-                    for i, (tid, mins) in enumerate(schedule[day]):
+                    for i, (tid, mins) in enumerate(schedule[current_day]):
                         if tid == t.id:
-                            schedule[day][i] = (tid, mins + alloc)
+                            schedule[current_day][i] = (tid, mins + alloc)
                             found = True
                             break
                     if not found:
-                        schedule[day].append((t.id, alloc))
-                    day_remaining[day] -= alloc
-                    remaining -= alloc
+                        schedule[current_day].append((t.id, alloc))
+                    day_remaining[current_day] -= alloc
+                    pass2_needs[t.id] -= alloc
 
         return schedule, warnings
-
+    
     # 策略二：BALANCED (均衡模式)
     else:
         task_needs = {t.id: weekly_quota[t.id] for t in tasks}
