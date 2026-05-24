@@ -166,16 +166,26 @@ def allocate_weekly(
             if day_remaining[current_day] <= 0:
                 continue
                 
-            # A. 正常按比例平攤 (將 < 改為 <=，任務在死線當天也能和平共享時間)
+            # A. 正常按比例平攤 (加入動態死線壓力)
             active_tasks = [t for t in tasks if task_needs[t.id] > 0 and current_day <= t.deadline]
             if active_tasks:
-                total_score = sum(t.priority_score for t in active_tasks)
+                # ── 升級：動態死線加權 (Dynamic Deadline Weighting) ──
+                dynamic_scores = {}
+                for t in active_tasks:
+                    days_left = max(1, (t.deadline - current_day).days + 1)
+                    # 隨著死線逼近，權重非線性放大 (例如剩 1 天時，權重會大幅增加)
+                    pressure_multiplier = 1.0 + (3.0 / days_left) 
+                    dynamic_scores[t.id] = t.priority_score * pressure_multiplier
+                    
+                total_score = sum(dynamic_scores.values())
                 if total_score <= 0:
                     weights = {t.id: 1.0 / len(active_tasks) for t in active_tasks}
                 else:
-                    weights = {t.id: (t.priority_score / total_score) for t in active_tasks}
+                    # 使用加上壓力乘數後的分數來計算權重比例
+                    weights = {t.id: (dynamic_scores[t.id] / total_score) for t in active_tasks}
 
                 day_capacity = day_remaining[current_day]
+                # ... (下方迴圈維持不變) ...
                 for t in active_tasks:
                     alloc = round(min(day_capacity * weights[t.id], task_needs[t.id]))
                     if alloc > 0:
@@ -187,9 +197,13 @@ def allocate_weekly(
             must_finish_today = [t for t in tasks if current_day == t.deadline and task_needs[t.id] > 0]
             for t in must_finish_today:
                 need = task_needs[t.id]
+                # 再次檢查是否真的夠了
                 if day_remaining[current_day] < need:
-                    missing = need - day_remaining[current_day]
-                    raise PomodoroDebtError(f"Schedule failed! Task '{t.name}' lacks {missing:.0f} mins on deadline.")
+                    # 升級報錯訊息，給予明確的 UX 引導
+                    raise PomodoroDebtError(
+                        f"排程崩潰！任務 '{t.name}' 在死線當天還缺 {need - day_remaining[current_day]:.0f} 分鐘。\n"
+                        f"💡 建議：目前任務過度擁擠，請切換至「Deep Work (集中模式)」來強行通關，或延後死線。"
+                    )
                 
                 found = False
                 for i, (tid, mins) in enumerate(schedule[current_day]):
@@ -208,10 +222,11 @@ def allocate_weekly(
             days_until_dl = (t.deadline - start_date).days + 1
             if task_needs[t.id] > 0.5:
                 if days_until_dl <= 7:
-                    raise PomodoroDebtError(f"Insufficient time! Urgent task '{t.name}' lacks {task_needs[t.id]:.0f} mins.")
-                else:
-                    warnings.append(f"Task '{t.name}' missed weekly target by {task_needs[t.id]:.0f} mins.")
-
+                    raise PomodoroDebtError(
+                        f"總時數不足！緊急任務 '{t.name}' 還缺 {task_needs[t.id]:.0f} 分鐘。\n"
+                        f"💡 建議：請切換至「Deep Work (集中模式)」優先搶救，或調高每日可讀書時數。"
+                    )
+                
         # 第二階段：填補彈性時間
         pass2_needs = {}
         for t in tasks:
