@@ -1241,14 +1241,16 @@ class WeeklyView(ctk.CTkFrame):
                 top_row = ctk.CTkFrame(t_card, fg_color="transparent")
                 top_row.pack(fill="x", padx=12, pady=(8, 2))
                 
+                # 任務名稱 (排在最左邊)
+                body_label(top_row, t.name, size=13).pack(side="left")
+
+                # [+] 展開折疊按鈕 (緊接在任務名稱的右邊)
                 toggle_btn = ctk.CTkButton(
                     top_row, text="+", width=24, height=24,
                     fg_color=BORDER, hover_color=ARC_BG, text_color=T1,
                     font=ctk.CTkFont(size=14, weight="bold"), corner_radius=6
                 )
-                toggle_btn.pack(side="left", padx=(0, 8))
-                
-                body_label(top_row, t.name, size=13).pack(side="left")
+                toggle_btn.pack(side="left", padx=(8, 0))
                 
                 ctk.CTkButton(
                     top_row, text="⋯", width=28, height=24,
@@ -1338,8 +1340,8 @@ class WeeklyView(ctk.CTkFrame):
             
         section_label(self._task_list_scroll, "TASKS & DEADLINES").pack(anchor="w", pady=(12, 8))
         
-        # 取得本週所有未完成任務
-        tasks = db.get_all_tasks(week_start=ws, completed=False)
+        # 取得本週所有未完成任務 (修正 ws 變數錯誤)
+        tasks = db.get_all_tasks(week_start=self._app.week_start, completed=False)
         
         if not tasks:
             body_label(self._task_list_scroll, "No pending tasks.", color=T2).pack(pady=10)
@@ -1355,16 +1357,16 @@ class WeeklyView(ctk.CTkFrame):
                 top_row = ctk.CTkFrame(t_card, fg_color="transparent")
                 top_row.pack(fill="x", padx=12, pady=(8, 2))
                 
-                # [+] 展開折疊按鈕 (排在最左邊)
+                # 任務名稱 (排在最左邊)
+                body_label(top_row, t.name, size=13).pack(side="left")
+
+                # [+] 展開折疊按鈕 (緊接在任務名稱的右邊)
                 toggle_btn = ctk.CTkButton(
                     top_row, text="+", width=24, height=24,
                     fg_color=BORDER, hover_color=ARC_BG, text_color=T1,
                     font=ctk.CTkFont(size=14, weight="bold"), corner_radius=6
                 )
-                toggle_btn.pack(side="left", padx=(0, 8))
-                
-                # 任務名稱 (靠左，接在按鈕右邊)
-                body_label(top_row, t.name, size=13).pack(side="left")
+                toggle_btn.pack(side="left", padx=(8, 0))
                 
                 # ⋯ 編輯按鈕 (靠最右)
                 ctk.CTkButton(
