@@ -1136,6 +1136,19 @@ class WeeklyView(ctk.CTkFrame):
         hours_entry.pack(side="right", padx=(0, 16))
         hours_label = body_label(hdr, "Default Hrs/Day:", color=T2, size=12)
         hours_label.pack(side="right", padx=4)
+        # ── 新增：排程策略切換按鈕 ───────────────────────────────────────
+        self._strategy_var = ctk.StringVar(value="Balanced")
+        strategy_btn = ctk.CTkSegmentedButton(
+            hdr, values=["Deep Work", "Balanced"],
+            variable=self._strategy_var,
+            font=ctk.CTkFont(size=12),
+            selected_color=T1, selected_hover_color=SIDE_SEL,
+            unselected_color=BORDER, text_color="#FFF",
+            unselected_hover_color=ARC_BG
+        )
+        strategy_btn.pack(side="right", padx=(0, 16))
+        strategy_label = body_label(hdr, "Strategy:", color=T2, size=12)
+        strategy_label.pack(side="right", padx=4)
 
         Divider(self).pack(fill="x", padx=28, pady=12)
 
@@ -1319,9 +1332,13 @@ class WeeklyView(ctk.CTkFrame):
             return
         work_days   = [self._app.week_start + timedelta(days=i) for i in range(7)]
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
+        # 讀取介面選擇並標準化為下底線格式字串 ("deep_work" 或 "balanced")
+        strat = self._strategy_var.get().lower().replace(" ", "_")
+        self._app.schedule_strategy = strat  # 更新全域變數
+
         try:
             alloc = scheduler.allocate_weekly(
-                tasks, self._app.week_start, self._app.hours_per_day, class_hours)
+                tasks, self._app.week_start, self._app.hours_per_day, class_hours, strategy=strat)
         except scheduler.PomodoroDebtError as e:
             messagebox.showerror("Schedule Impossible", str(e))
             return
@@ -1670,8 +1687,10 @@ class AddTaskDialog(ctk.CTkToplevel):
         work_days   = [self._week_start + timedelta(days=i) for i in range(7)] 
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
         try:
+            # 讀取目前存在於 App 全域狀態中的排程策略
+            strat = getattr(self._app, "schedule_strategy", "balanced")
             alloc = scheduler.allocate_weekly(tasks, self._week_start,
-                                              self._app.hours_per_day, class_hours)
+                                              self._app.hours_per_day, class_hours, strategy=strat)
             db.clear_schedule_for_week(self._week_start)
             for day_date, entries in alloc.items():
                 for task_id, minutes in entries:
@@ -2127,7 +2146,8 @@ class App(ctk.CTk):
         self.week_start = week_start_of(self.today)
 
         # 預設每日可讀書時數
-        self.hours_per_day = 8.0  
+        self.hours_per_day = 8.0
+        self.schedule_strategy = "balanced"  # 新增：紀錄全域排程策略變數，預設為均衡推進
         
         # 嘗試從本地檔案讀取上一次儲存的設定值
         try:
