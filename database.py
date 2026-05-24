@@ -220,10 +220,6 @@ def task_in_week_by_name(name: str, week_start: date) -> Optional[Task]:
     return None
 
 
-def delete_task(task_id: int) -> None:
-    with _conn() as conn:
-        conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
-
 def mark_task_complete(task_id: int) -> None:
     with _conn() as conn:
         conn.execute(
@@ -527,3 +523,124 @@ def get_tasks_from_week(week_start: date) -> List[Task]:
     for t in tasks:
         t.subtasks = get_subtasks(t.id)
     return tasks
+
+# ── Task Edit & Delete ────────────────────────────────────────────────────────
+
+def update_task(
+    task_id:           int,
+    name:              str,
+    urgency:           int,
+    importance:        int,
+    time_allocation:   float,
+    remaining_minutes: float,
+    quadrant:          Quadrant,   # ← 修正：移除字串 quote（BUG-5）
+    priority_score:    float,
+) -> None:
+    """
+    UPDATE 任務的可編輯欄位。
+    deadline / source / week_start / notes / completed 維持不變。
+    """
+    with _conn() as conn:
+        conn.execute(
+            """UPDATE tasks
+               SET name              = ?,
+                   urgency           = ?,
+                   importance        = ?,
+                   time_allocation   = ?,
+                   remaining_minutes = ?,
+                   quadrant          = ?,
+                   priority_score    = ?
+               WHERE id = ?""",
+            (name, urgency, importance,
+             time_allocation, remaining_minutes,
+             quadrant.value, priority_score,
+             task_id),
+        )
+
+
+def delete_task(task_id: int) -> None:
+    """
+    【原子操作版】完整刪除一個任務，在單一 transaction 內執行：
+      1. 從 pomodoro_blocks.task_slices（JSON）移除相關 slice
+      2. 刪除 weekly_schedule entries（ON DELETE CASCADE 也會處理，此處顯式）
+      3. 刪除 subtasks（ON DELETE CASCADE 也會處理，此處顯式）
+      4. 刪除 tasks 本體
+
+    修正 BUG-2：原本四個函式各自開 _conn()，
+    現在全部合進同一個 with _conn() as conn，確保原子性。
+    """
+    with _conn() as conn:
+        # ── 步驟 1：清理 pomodoro_blocks 的 JSON task_slices ──────────────
+        rows = conn.execute(
+            "SELECT id, task_slices FROM pomodoro_blocks WHERE completed = 0"
+        ).fetchall()
+
+        for row in rows:
+            slices = json.loads(row["task_slices"])
+            new_slices = [s for s in slices if s["task_id"] != task_id]
+            if len(new_slices) != len(slices):      # 有異動才寫回
+                conn.execute(
+                    "UPDATE pomodoro_blocks SET task_slices = ? WHERE id = ?",
+                    (json.dumps(new_slices), row["id"]),
+                )
+
+        # ── 步驟 2：刪除 weekly_schedule entries ──────────────────────────
+        conn.execute(
+            "DELETE FROM weekly_schedule WHERE task_id = ?",
+            (task_id,),
+        )
+
+        # ── 步驟 3：刪除 subtasks ──────────────────────────────────────────
+        conn.execute(
+            "DELETE FROM subtasks WHERE task_id = ?",
+            (task_id,),
+        )
+
+        # ── 步驟 4：刪除 task 本體 ────────────────────────────────────────
+        conn.execute(
+            "DELETE FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+
+
+# ── 以下三個函式保留，供其他地方單獨呼叫（如需要） ───────────────────────────
+
+def delete_block_slices(task_id: int) -> None:
+    """
+    從所有未完成的 pomodoro_blocks 的 task_slices（JSON）中移除 task_id 的條目。
+    注意：若需原子性，請使用 delete_task() 而非單獨呼叫此函式。
+    """
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT id, task_slices FROM pomodoro_blocks WHERE completed = 0"
+        ).fetchall()
+
+        for row in rows:
+            slices = json.loads(row["task_slices"])
+            new_slices = [s for s in slices if s["task_id"] != task_id]
+            if len(new_slices) != len(slices):
+                conn.execute(
+                    "UPDATE pomodoro_blocks SET task_slices = ? WHERE id = ?",
+                    (json.dumps(new_slices), row["id"]),
+                )
+
+
+def delete_schedule_entries(task_id: int) -> None:
+    """刪除 weekly_schedule 中所有與 task_id 相關的排程列。"""
+    with _conn() as conn:
+        conn.execute(
+            "DELETE FROM weekly_schedule WHERE task_id = ?",
+            (task_id,),
+        )
+
+
+def delete_subtasks(task_id: int) -> None:
+    """
+    明確刪除 task_id 的所有 subtasks。
+    （subtasks 表已設 ON DELETE CASCADE，但提供明確函式供外部直接呼叫。）
+    """
+    with _conn() as conn:
+        conn.execute(
+            "DELETE FROM subtasks WHERE task_id = ?",
+            (task_id,),
+        )

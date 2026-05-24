@@ -19,3 +19,7 @@ pip install -r requirements.txt
 本專案是一款結合**艾森豪時間管理矩陣（Eisenhower Matrix）**與自動優化演算法的智慧讀書/讀書計畫管理系統。系統支援自動動態排程、每週難度回饋調整，並提供現代化的 GUI 視窗介面與輕量化終端機雙版本。
 
 ---
+    「作業開始」
+    預計結束時間：即時
+    預計編輯檔案：app.py、daily_playner.py、database.py
+    「作業結束」

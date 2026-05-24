@@ -161,55 +161,124 @@ def run_countdown(label: str, total_seconds: int, icon: str) -> Tuple[int, str]:
 
 # ── Today view ────────────────────────────────────────────────────────────────
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ② display_today_tasks()  ← 完整取代原本第 164–212 行
+#
+# 修正 BUG-1：
+#   v1 在編輯完後用「遞迴呼叫自身」來重新整理畫面。
+#   問題：每次遞迴都把一個新的 display_today_tasks() 推進 call stack，
+#   當函式 return 時，stack 往回捲，main() 裡的
+#   input("\n  Press Enter to continue...") 會被執行多次。
+#
+#   修正方式：改用 while True 的「重繪迴圈」，完全消除遞迴。
+#   流程：
+#     while True:
+#       ① 顯示任務列表（每次迴圈重新從 DB 抓最新資料）
+#       ② 等待使用者輸入
+#       ③ Enter → break（返回 main）
+#       ④ 輸入數字 → edit_task() → 繼續 while（自動重繪）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 def display_today_tasks(today: date) -> None:
-    banner(f"  {today.strftime('%A, %B %d, %Y')}  ")
+    """
+    顯示今日任務列表，並提供選擇任務進行編輯/刪除的互動迴圈。
+    使用者按 Enter 返回主選單；完成編輯後自動重新整理列表（迴圈，不遞迴）。
+    """
+    # ── 外層迴圈：每次編輯完後重新整理（修正 BUG-1：用迴圈取代遞迴）────────
+    while True:
+        clear()
+        banner(f"  {today.strftime('%A, %B %d, %Y')}  ")
 
-    # ── Fixed class blocks ─────────────────────────────────────────────────
-    classes = db.get_classes_for_day(today)
-    if classes:
-        print("\n  ┌─ Today's Classes (fixed) ──────────────────────────┐")
-        for c in classes:
-            hrs = db._time_diff_hours(c["start_time"], c["end_time"])
-            loc = f"  [{c['location']}]" if c["location"] else ""
-            print(f"  │  📚 {c['course_name']:<18}  "
-                  f"{c['start_time']}–{c['end_time']}  ({hrs:.1f}h){loc}")
-        total_cls = db.get_class_hours_for_day(today)
-        print(f"  │  Total class time: {total_cls:.1f}h")
-        print("  └────────────────────────────────────────────────────┘")
+        # ── Fixed class blocks ─────────────────────────────────────────────
+        classes = db.get_classes_for_day(today)
+        if classes:
+            print("\n  ┌─ Today's Classes (fixed) ──────────────────────────┐")
+            for c in classes:
+                hrs = db._time_diff_hours(c["start_time"], c["end_time"])
+                loc = f"  [{c['location']}]" if c["location"] else ""
+                print(f"  │  📚 {c['course_name']:<18}  "
+                      f"{c['start_time']}–{c['end_time']}  ({hrs:.1f}h){loc}")
+            total_cls = db.get_class_hours_for_day(today)
+            print(f"  │  Total class time: {total_cls:.1f}h")
+            print("  └────────────────────────────────────────────────────┘")
 
-    # ── Scheduled tasks ────────────────────────────────────────────────────
-    tasks = db.get_tasks_for_date(today)
+        # ── Scheduled tasks ────────────────────────────────────────────────
+        tasks = db.get_tasks_for_date(today)
 
-    if not tasks:
-        print("\n  ⚠  No tasks scheduled for today from the Weekly Planner.")
-        print("  → Run weekly_planner.py to set up your week,")
-        print("    or use option 2 to add an ad-hoc task.")
-        return
+        # 修正 BUG-4：dedup（防止 weekly_schedule 有重複 entry 的邊界情況）
+        seen_ids = set()
+        unique_tasks = []
+        for t in tasks:
+            if t.id not in seen_ids:
+                seen_ids.add(t.id)
+                unique_tasks.append(t)
+        tasks = unique_tasks
 
-    weekly = [t for t in tasks if t.source == "weekly"]
-    adhoc  = [t for t in tasks if t.source == "adhoc"]
+        if not tasks:
+            print("\n  ⚠  No tasks scheduled for today from the Weekly Planner.")
+            print("  → Run weekly_planner.py to set up your week,")
+            print("    or use option 2 to add an ad-hoc task.")
+            # 沒有任務時，不顯示編輯提示，直接返回（不進入互動迴圈）
+            return
 
-    if weekly:
-        print("\n  ┌─ From Weekly Planner ───────────────────────────────┐")
-        for t in weekly:
-            mark = "✓" if t.completed else "○"
-            dl   = t.deadline.strftime("%m/%d")
-            print(f"  │  {mark} [{t.quadrant.value}] {t.name:<30}  "
-                  f"{t.remaining_minutes:>5.0f}m  dl:{dl}")
-            for s in t.subtasks:
-                sm = "✓" if s.completed else "·"
-                print(f"  │       {sm} {s.name}  ({s.estimated_minutes:.0f}m)")
-        print("  └────────────────────────────────────────────────────┘")
+        weekly = [t for t in tasks if t.source == "weekly"]
+        adhoc  = [t for t in tasks if t.source == "adhoc"]
 
-    if adhoc:
-        print("\n  ┌─ Ad-Hoc Tasks ──────────────────────────────────────┐")
-        for t in adhoc:
-            mark = "✓" if t.completed else "○"
-            print(f"  │  {mark} {t.name:<36}  {t.remaining_minutes:>5.0f}m")
-            for s in t.subtasks:
-                sm = "✓" if s.completed else "·"
-                print(f"  │       {sm} {s.name}  ({s.estimated_minutes:.0f}m)")
-        print("  └────────────────────────────────────────────────────┘")
+        # ── 建立編號索引（weekly 排前，adhoc 排後）────────────────────────
+        numbered_tasks = []   # [(display_num, Task), ...]
+
+        if weekly:
+            print("\n  ┌─ From Weekly Planner ───────────────────────────────┐")
+            for t in weekly:
+                num = len(numbered_tasks) + 1
+                numbered_tasks.append((num, t))
+                mark = "✓" if t.completed else "○"
+                dl   = t.deadline.strftime("%m/%d")
+                print(f"  │  {num:>2}. {mark} [{t.quadrant.value}] {t.name:<28}  "
+                      f"{t.remaining_minutes:>5.0f}m  dl:{dl}")
+                for s in t.subtasks:
+                    sm = "✓" if s.completed else "·"
+                    print(f"  │        {sm} {s.name}  ({s.estimated_minutes:.0f}m)")
+            print("  └────────────────────────────────────────────────────┘")
+
+        if adhoc:
+            print("\n  ┌─ Ad-Hoc Tasks ──────────────────────────────────────┐")
+            for t in adhoc:
+                num = len(numbered_tasks) + 1
+                numbered_tasks.append((num, t))
+                mark = "✓" if t.completed else "○"
+                print(f"  │  {num:>2}. {mark} {t.name:<34}  {t.remaining_minutes:>5.0f}m")
+                for s in t.subtasks:
+                    sm = "✓" if s.completed else "·"
+                    print(f"  │        {sm} {s.name}  ({s.estimated_minutes:.0f}m)")
+            print("  └────────────────────────────────────────────────────┘")
+
+        # ── 互動提示 ──────────────────────────────────────────────────────
+        print()
+        raw = input(
+            f"  Select a task number to edit/delete (1–{len(numbered_tasks)})"
+            f", or Enter to go back: "
+        ).strip()
+
+        # Enter → 返回 main（while 結束）
+        if raw == "":
+            break
+
+        # 輸入驗證
+        if not raw.isdigit() or not (1 <= int(raw) <= len(numbered_tasks)):
+            print(f"  ✗  請輸入 1–{len(numbered_tasks)} 的數字，或直接 Enter 返回。")
+            input("  Press Enter to continue...")
+            # 繼續 while → 重新整理畫面
+            continue
+
+        _, chosen_task = numbered_tasks[int(raw) - 1]
+
+        # 進入編輯介面（edit_task 不遞迴，return 後繼續 while）
+        edit_task(chosen_task.id, today)
+
+        input("\n  Press Enter to refresh the list...")
+        # while 繼續 → 重新從 DB 抓資料、重新整理畫面
+
 
 
 # ── Ad-hoc task ───────────────────────────────────────────────────────────────
@@ -293,6 +362,131 @@ def add_adhoc_task(today: date) -> None:
 
     print(f"\n  ✓ '{name}' added to today's schedule.")
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ① edit_task()
+#    貼在 add_adhoc_task() 的最後一行之後，
+#    在 # ── Pomodoro configuration ── 區塊之前。
+#    本函式與 v1 相比只有 BUG-3（orig_hours_str 格式）的微調。
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def edit_task(task_id: int, today: date) -> None:
+    """
+    編輯或刪除一個任務。
+    - 預設值填入原本的資料，使用者直接 Enter 即保留原值。
+    - 儲存時重新計算 quadrant 與 priority_score。
+    - 刪除時以單一 transaction 清除 task、subtasks、
+      weekly_schedule entries、pomodoro block slices。
+    """
+    # ── 取得任務資料 ──────────────────────────────────────────────────────────
+    task = db.get_task(task_id)
+    if task is None:
+        print(f"\n  ✗  找不到 task id={task_id}。")
+        return
+
+    clear()
+    banner(f"  Editing Task  ")
+    print(f"\n  Editing: {task.name}")
+    print("  （直接 Enter 保留原值）\n")
+
+    # ── 欄位輸入（有預設值）────────────────────────────────────────────────
+
+    # Task name
+    raw_name = input(f"  Task name [{task.name}]: ").strip()
+    new_name = raw_name if raw_name else task.name
+
+    # Estimated hours
+    # 修正 BUG-3：改用 :g 格式，2.0 → "2", 2.5 → "2.5", 效果與原本相同但更簡潔
+    orig_hours_str = f"{task.time_allocation:g}"
+    raw_hours = input(f"  Estimated hours [{orig_hours_str}]: ").strip()
+    if raw_hours:
+        try:
+            new_hours = float(raw_hours)
+            if new_hours < 0.1:
+                print("  ✗  最小 0.1 小時，已重設為原值。")
+                new_hours = task.time_allocation
+        except ValueError:
+            print("  ✗  無效數字，已重設為原值。")
+            new_hours = task.time_allocation
+    else:
+        new_hours = task.time_allocation
+
+    # 若 hours 改變，按比例調整 remaining_minutes（保留已完成進度的比例）
+    if new_hours != task.time_allocation and task.time_allocation > 0:
+        ratio = new_hours / task.time_allocation
+        new_remaining = round(task.remaining_minutes * ratio, 1)
+    else:
+        new_remaining = task.remaining_minutes
+
+    # Urgency
+    raw_urg = input(f"  Urgency    [1-5] [{task.urgency}]: ").strip()
+    if raw_urg and raw_urg.isdigit() and 1 <= int(raw_urg) <= 5:
+        new_urgency = int(raw_urg)
+    else:
+        if raw_urg:
+            print("  ✗  urgency 須介於 1–5，已重設為原值。")
+        new_urgency = task.urgency
+
+    # Importance
+    raw_imp = input(f"  Importance [1-5] [{task.importance}]: ").strip()
+    if raw_imp and raw_imp.isdigit() and 1 <= int(raw_imp) <= 5:
+        new_importance = int(raw_imp)
+    else:
+        if raw_imp:
+            print("  ✗  importance 須介於 1–5，已重設為原值。")
+        new_importance = task.importance
+
+    # ── 重新計算 quadrant & priority_score ──────────────────────────────────
+    new_quadrant = scheduler.classify_quadrant(new_urgency, new_importance)
+    new_score    = scheduler.compute_priority_score(
+        new_urgency, new_importance, new_quadrant, task.deadline
+    )
+
+    # ── 顯示摘要 ─────────────────────────────────────────────────────────────
+    print()
+    print(f"  ┌─ Summary ──────────────────────────────────────────┐")
+    print(f"  │  Name      : {new_name}")
+    print(f"  │  Hours     : {new_hours:g}h  "
+          f"(remaining ≈ {new_remaining:.0f}m)")
+    print(f"  │  Urgency   : {new_urgency}  │  Importance: {new_importance}")
+    print(f"  │  Quadrant  : [{new_quadrant.value}]  "
+          f"│  Score: {new_score:.4f}")
+    print(f"  └────────────────────────────────────────────────────┘")
+    print()
+    print("  1  Save changes")
+    print("  2  Delete task  ⚠  (不可還原)")
+    print("  3  Cancel")
+    print()
+
+    action = input("  › ").strip()
+
+    # ── 儲存修改 ─────────────────────────────────────────────────────────────
+    if action == "1":
+        db.update_task(
+            task_id           = task.id,
+            name              = new_name,
+            urgency           = new_urgency,
+            importance        = new_importance,
+            time_allocation   = new_hours,
+            remaining_minutes = new_remaining,
+            quadrant          = new_quadrant,
+            priority_score    = new_score,
+        )
+        print(f"\n  ✓ '{new_name}' 已更新。")
+
+    # ── 刪除任務 ─────────────────────────────────────────────────────────────
+    elif action == "2":
+        confirm = input(
+            f"\n  確定刪除 '{task.name}' 及其所有子任務與排程？(yes/n): "
+        ).strip().lower()
+        if confirm == "yes":
+            db.delete_task(task.id)
+            print(f"\n  ✓ '{task.name}' 已刪除（含子任務、排程、Pomodoro slices）。")
+        else:
+            print("  取消刪除。")
+
+    # ── 取消 ─────────────────────────────────────────────────────────────────
+    else:
+        print("  取消，無任何變更。")
 
 # ── Pomodoro configuration ────────────────────────────────────────────────────
 
