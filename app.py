@@ -1462,10 +1462,20 @@ class WeeklyView(ctk.CTkFrame):
             return
         work_days   = [self._app.week_start + timedelta(days=i) for i in range(7)]
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
+        
+        # --- 加上這段：讀取介面按鈕的策略並存下來 ---
+        strat = self._strategy_var.get().lower().replace(" ", "_")
+        self._app.schedule_strategy = strat
+        # ------------------------------------------
+
         try:
-            # 將原本寫死的 8.0 成功改為動態讀取變数 self._app.hours_per_day
             alloc = scheduler.allocate_weekly(
-                tasks, self._app.week_start, self._app.hours_per_day, class_hours)
+                tasks, 
+                self._app.week_start, 
+                self._app.hours_per_day, 
+                class_hours,
+                strategy=strat  # <--- 關鍵修改：將策略參數傳給演算法大腦
+            )
         except scheduler.PomodoroDebtError as e:
             messagebox.showerror("Schedule Impossible", str(e))
             return
