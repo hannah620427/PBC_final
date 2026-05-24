@@ -1498,16 +1498,22 @@ class WeeklyView(ctk.CTkFrame):
         # ------------------------------------------
 
         try:
-            alloc = scheduler.allocate_weekly(
+            # 修改點 1：用 alloc, warnings 接住兩個回傳值
+            alloc, warnings = scheduler.allocate_weekly(
                 tasks, 
                 self._app.week_start, 
                 self._app.hours_per_day, 
                 class_hours,
-                strategy=strat  # <--- 關鍵修改：將策略參數傳給演算法大腦
+                strategy=strat
             )
         except scheduler.PomodoroDebtError as e:
             messagebox.showerror("Schedule Impossible", str(e))
             return
+            
+        # 修改點 2：若有警告，跳出提示視窗
+        if warnings:
+            messagebox.showwarning("Pacing Warning", "\n".join(warnings))
+            
         db.clear_schedule_for_week(self._app.week_start)
         for day_date, entries in alloc.items():
             for task_id, minutes in entries:
@@ -1726,10 +1732,22 @@ class AddTaskDialog(ctk.CTkToplevel):
         work_days   = [self._week_start + timedelta(days=i) for i in range(7)] 
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
         try:
-            # 讀取目前存在於 App 全域狀態中的排程策略
+            # 讀取全域策略設定
             strat = getattr(self._app, "schedule_strategy", "balanced")
-            alloc = scheduler.allocate_weekly(tasks, self._week_start,
-                                              self._app.hours_per_day, class_hours, strategy=strat)
+            
+            # 修改點 1：用 alloc, warnings 接住兩個回傳值
+            alloc, warnings = scheduler.allocate_weekly(
+                tasks, 
+                self._week_start,
+                self._app.hours_per_day, 
+                class_hours, 
+                strategy=strat
+            )
+            
+            # 修改點 2：若有警告，跳出提示視窗 (加入 parent=self 確保視窗顯示在最上層)
+            if warnings:
+                messagebox.showwarning("Pacing Warning", "\n".join(warnings), parent=self)
+                
             db.clear_schedule_for_week(self._week_start)
             for day_date, entries in alloc.items():
                 for task_id, minutes in entries:

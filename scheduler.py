@@ -57,26 +57,39 @@ def allocate_weekly(
     hours_per_day:         float = 8.0,
     class_hours:           dict  = None,
     strategy:              str   = "balanced",
-) -> dict:
+) -> tuple[dict, list[str]]:
+    # 注意：回傳型態變更為 tuple，包含 schedule 字典與 warnings 清單
     if class_hours is None:
         class_hours = {}
 
     work_days = [start_date + timedelta(days=i) for i in range(7)]
     
-    # Initialize daily available capacity in minutes
     day_remaining = {}
     for d in work_days:
         blocked = class_hours.get(d, 0.0) * 60
         day_remaining[d] = max(0.0, hours_per_day * 60 - blocked)
 
     schedule = {d: [] for d in work_days}
+    warnings = []
 
-    # ── STRATEGY 1: DEEP WORK (Task-by-Task Greedy Vertical Allocation) ──
+    # 統一計算本週低消配額 (Quota)
+    weekly_quota = {}
+    for t in tasks:
+        days_until_dl = max(1, (t.deadline - start_date).days + 1)
+        if days_until_dl > 7:
+            base_quota = t.remaining_minutes * (7 / days_until_dl)
+            pacing_factor = 0.5 + (t.priority_score / 5.0)
+            quota = min(t.remaining_minutes, base_quota * pacing_factor)
+        else:
+            quota = t.remaining_minutes
+        weekly_quota[t.id] = quota
+
+    # 策略一：DEEP WORK (集中模式)
     if strategy == "deep_work":
-        # Sort tasks by priority score descending, then by deadline ascending
         sorted_tasks = sorted(tasks, key=lambda x: (-x.priority_score, x.deadline))
-        task_needs = {t.id: t.remaining_minutes for t in sorted_tasks}
+        task_needs = {t.id: weekly_quota[t.id] for t in sorted_tasks}
         
+        # 第一階段：盡可能塞滿低消
         for t in sorted_tasks:
             remaining = task_needs[t.id]
             eligible_days = [d for d in work_days if d <= t.deadline] or work_days
@@ -94,58 +107,67 @@ def allocate_weekly(
                     remaining -= alloc
             task_needs[t.id] = remaining
 
-        # Final validation to detect insufficient capacity
+        # 檢驗階段：判斷報錯或產生軟性提醒
         for t in sorted_tasks:
+            days_until_dl = (t.deadline - start_date).days + 1
             if task_needs[t.id] > 0.5:
-                raise PomodoroDebtError(
-                    f"Schedule impossible! Task '{t.name}' requires {task_needs[t.id]:.0f} more minutes "
-                    f"but weekly time capacity is completely exhausted."
-                )
-        return schedule
+                if days_until_dl <= 7:
+                    raise PomodoroDebtError(
+                        f"Schedule impossible! Urgent task '{t.name}' requires {task_needs[t.id]:.0f} more minutes."
+                    )
+                else:
+                    warnings.append(
+                        f"Task '{t.name}' missed its weekly pacing target by {task_needs[t.id]:.0f} mins."
+                    )
 
-    # ── STRATEGY 2: BALANCED (Two-Pass Proportional Linear Pacing Allocation) ──
+        # 第二階段：填滿剩餘時間
+        pass2_needs = {t.id: max(0.0, t.remaining_minutes - weekly_quota[t.id]) for t in sorted_tasks}
+        for t in sorted_tasks:
+            remaining = pass2_needs[t.id]
+            if remaining <= 0:
+                continue
+            eligible_days = [d for d in work_days if d <= t.deadline] or work_days
+            for day in eligible_days:
+                if remaining <= 0:
+                    break
+                if day_remaining[day] <= 0:
+                    continue
+                alloc = min(remaining, day_remaining[day])
+                if alloc > 0:
+                    found = False
+                    for i, (tid, mins) in enumerate(schedule[day]):
+                        if tid == t.id:
+                            schedule[day][i] = (tid, mins + alloc)
+                            found = True
+                            break
+                    if not found:
+                        schedule[day].append((t.id, alloc))
+                    day_remaining[day] -= alloc
+                    remaining -= alloc
+
+        return schedule, warnings
+
+    # 策略二：BALANCED (均衡模式)
     else:
-        # Pass 1: Calculate and allocate mandatory weekly pacing quotas
-        weekly_quota = {}
-        for t in tasks:
-            days_until_dl = max(1, (t.deadline - start_date).days + 1)
-            if days_until_dl > 7:
-                # Calculate base linear pacing quota
-                base_quota = t.remaining_minutes * (7 / days_until_dl)
-                
-                # Priority-adjusted pacing multiplier (0.5x to 1.5x based on priority_score)
-                pacing_factor = 0.5 + (t.priority_score / 5.0)
-                
-                # Apply factor and bound it by the total remaining minutes
-                quota = min(t.remaining_minutes, base_quota * pacing_factor)
-            else:
-                # Full allocation required for tasks due within the current week
-                quota = t.remaining_minutes
-                
-            weekly_quota[t.id] = quota
-
         task_needs = {t.id: weekly_quota[t.id] for t in tasks}
         
-        # Chronological day-by-day distribution loop
+        # 第一階段：按比例分配
         for current_day in work_days:
             if day_remaining[current_day] <= 0:
                 continue
                 
-            # A. Enforce hard deadlines due on the current day
             must_finish_today = [t for t in tasks if current_day == t.deadline and task_needs[t.id] > 0]
             for t in must_finish_today:
                 need = task_needs[t.id]
                 if day_remaining[current_day] < need:
                     missing = need - day_remaining[current_day]
                     raise PomodoroDebtError(
-                        f"Schedule failed! Task '{t.name}' is due on {current_day.strftime('%m/%d')} ({current_day.strftime('%A')}), "
-                        f"but lacks {missing:.0f} minutes of available capacity before deadline."
+                        f"Schedule failed! Task '{t.name}' lacks {missing:.0f} mins on deadline."
                     )
                 schedule[current_day].append((t.id, need))
                 day_remaining[current_day] -= need
                 task_needs[t.id] = 0.0
                     
-            # B. Distribute time to active tasks proportionally based on priority scores
             active_tasks = [t for t in tasks if task_needs[t.id] > 0 and current_day < t.deadline]
             if not active_tasks or day_remaining[current_day] <= 0:
                 continue
@@ -164,15 +186,20 @@ def allocate_weekly(
                     day_remaining[current_day] -= alloc
                     task_needs[t.id] -= alloc
 
-        # Pass 1 Validation: Ensure all tasks due this week met their minimum required quotas
+        # 檢驗階段：判斷報錯或產生軟性提醒
         for t in tasks:
             days_until_dl = (t.deadline - start_date).days + 1
-            if days_until_dl <= 7 and task_needs[t.id] > 0.5:
-                raise PomodoroDebtError(
-                    f"Insufficient time! Urgent task '{t.name}' due this week lacks {task_needs[t.id]:.0f} minutes of required pacing."
-                )
+            if task_needs[t.id] > 0.5:
+                if days_until_dl <= 7:
+                    raise PomodoroDebtError(
+                        f"Insufficient time! Urgent task '{t.name}' lacks {task_needs[t.id]:.0f} mins."
+                    )
+                else:
+                    warnings.append(
+                        f"Task '{t.name}' missed its weekly pacing target by {task_needs[t.id]:.0f} mins."
+                    )
 
-        # Pass 2: Fill residual free time with future task quotas (opportunistic advancement)
+        # 第二階段：填補彈性時間
         pass2_needs = {}
         for t in tasks:
             scheduled_in_pass1 = weekly_quota[t.id] - task_needs[t.id]
@@ -196,7 +223,6 @@ def allocate_weekly(
             for t in active_tasks:
                 alloc = round(min(day_capacity * weights[t.id], pass2_needs[t.id]))
                 if alloc > 0:
-                    # Append or merge time slices if the task already exists on this day
                     found = False
                     for i, (tid, mins) in enumerate(schedule[current_day]):
                         if tid == t.id:
@@ -205,11 +231,10 @@ def allocate_weekly(
                             break
                     if not found:
                         schedule[current_day].append((t.id, alloc))
-
                     day_remaining[current_day] -= alloc
                     pass2_needs[t.id] -= alloc
 
-        return schedule
+        return schedule, warnings
 
 # ── Post-completion Recalculation ─────────────────────────────────────────────
 
