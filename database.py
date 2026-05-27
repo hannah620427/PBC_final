@@ -315,6 +315,15 @@ def insert_schedule_entry(
             (week_start.isoformat(), day_date.isoformat(), task_id, allocated_minutes),
         )
 
+def insert_schedule_entries_bulk(entries_data: List[tuple]) -> None:
+    """Batch insert to avoid opening/closing DB connection repeatedly."""
+    with _conn() as conn:
+        conn.executemany(
+            """INSERT INTO weekly_schedule (week_start, day_date, task_id, allocated_minutes)
+               VALUES (?,?,?,?)""",
+            entries_data
+        )
+
 
 def clear_schedule_for_week(week_start: date) -> None:
     with _conn() as conn:

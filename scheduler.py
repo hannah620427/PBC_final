@@ -62,6 +62,13 @@ def allocate_weekly(
         class_hours = {}
 
     work_days = [start_date + timedelta(days=i) for i in range(7)]
+
+    # --- [新增：逾期任務處理機制] ---
+    # 如果任務已經過期，強制把它的死線展延到「今天」，迫使系統立刻排程
+    for t in tasks:
+        if t.deadline < start_date:
+            t.deadline = start_date
+    # -----------------------------
     
     # Initialize daily available capacity in minutes
     day_remaining = {}
@@ -125,14 +132,20 @@ def allocate_weekly(
             weekly_quota[t.id] = quota
 
         task_needs = {t.id: weekly_quota[t.id] for t in tasks}
-        
+       
+        # --- [優化開始] 先把任務按照死線 (deadline) 分類到字典裡 ---
+        tasks_by_deadline = {}
+        for t in tasks:
+            tasks_by_deadline.setdefault(t.deadline, []).append(t)
+        # --- [優化結束] ---
+
         # Chronological day-by-day distribution loop
         for current_day in work_days:
             if day_remaining[current_day] <= 0:
                 continue
                 
             # A. Enforce hard deadlines due on the current day
-            must_finish_today = [t for t in tasks if current_day == t.deadline and task_needs[t.id] > 0]
+            must_finish_today = [t for t in tasks_by_deadline.get(current_day, []) if task_needs[t.id] > 0]
             for t in must_finish_today:
                 need = task_needs[t.id]
                 if day_remaining[current_day] < need:

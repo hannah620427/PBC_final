@@ -10,6 +10,7 @@ from tkinter import messagebox
 from tkcalendar import DateEntry
 import math
 from datetime import date, timedelta
+import time
 from typing import Optional, List, Dict
 
 import database as db
@@ -30,6 +31,7 @@ TIMER_BG = "#F2EFE9"
 ARC_BG   = "#DDD9D2"
 ARC_FG   = "#1A1A1A"
 ARC_BRK  = "#5A9470"
+ARC_PAUSE = "#E3B341"
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("green")
@@ -123,9 +125,18 @@ class TimerCanvas(tk.Canvas):
                          font=("Courier New", 13), fill=T2)
 
     def update(self, remaining_s: int, progress: float,
-               label: str, is_break: bool):
+               label: str, is_break: bool, is_paused: bool = False):
         self.delete("all")
-        arc_color = ARC_BRK if is_break else ARC_FG
+        
+        # --- [優化：加入暫停顏色的判斷] ---
+        if is_paused:
+            arc_color = ARC_PAUSE
+        elif is_break:
+            arc_color = ARC_BRK
+        else:
+            arc_color = ARC_FG
+        # --------------------------------
+        
         x0, y0, x1, y1 = self._xy()
 
         # Background ring
@@ -711,9 +722,9 @@ class TimerPanel(ctk.CTkFrame):
             self.reset_display()
 
     # ── Called by App timer engine ────────────────────────────────────────
-    def update_display(self, remaining_s: int, progress: float, is_break: bool):
+    def update_display(self, remaining_s: int, progress: float, is_break: bool, is_paused: bool = False):
         label = "break" if is_break else "focus"
-        self._canvas.update(remaining_s, progress, label, is_break)
+        self._canvas.update(remaining_s, progress, label, is_break, is_paused)
 
     def on_block_start(self, idx: int, total: int, block, task_map: Dict,
                        is_break: bool):
@@ -2490,31 +2501,42 @@ class App(ctk.CTk):
             return
         self._in_break      = False
         self._elapsed_s     = 0
+        self._accumulated_s = 0.0                 # [優化] 記錄暫停前累積的時間
+        self._anchor_time   = time.time()         # [優化] 記錄系統絕對時間錨點
         self._total_s       = self._focus_min * 60
         self._timer_active  = True
         self._timer_paused  = False
         b = self._blocks[self._block_idx]
         self._daily_view.timer_panel.on_block_start(
             self._block_idx, len(self._blocks), b, self._task_map, False)
-        self._after_id = self.after(1000, self._tick)
+        # [優化] 把 1000ms 改成 100ms，讓圓弧動畫變得像 60fps 一樣滑順
+        self._after_id = self.after(100, self._tick)
 
     def _start_break(self):
-        self._in_break  = True
-        self._elapsed_s = 0
-        self._total_s   = self._break_min * 60
+        self._in_break      = True
+        self._elapsed_s     = 0
+        self._accumulated_s = 0.0                 # [優化]
+        self._anchor_time   = time.time()         # [優化]
+        self._total_s       = self._break_min * 60
         b = self._blocks[self._block_idx]
         self._daily_view.timer_panel.on_block_start(
             self._block_idx, len(self._blocks), b, self._task_map, True)
-        self._after_id = self.after(1000, self._tick)
+        self._after_id = self.after(100, self._tick)
 
     def _tick(self):
         if not self._timer_active or self._timer_paused:
             return
-        self._elapsed_s += 1
+            
+        now = time.time()
+        exact_elapsed = self._accumulated_s + (now - self._anchor_time)
+        self._elapsed_s = int(exact_elapsed)
+        
         remaining = self._total_s - self._elapsed_s
-        progress  = (self._elapsed_s / self._total_s) if self._total_s else 1.0
-        self._daily_view.timer_panel.update_display(remaining, progress,
-                                                     self._in_break)
+        progress  = (exact_elapsed / self._total_s) if self._total_s else 1.0
+        
+        # [變色優化] 正常計時中，傳入 is_paused = False
+        self._daily_view.timer_panel.update_display(remaining, progress, self._in_break, False)
+        
         if remaining <= 0:
             if not self._in_break:
                 self._total_focus_min += self._focus_min
@@ -2527,7 +2549,7 @@ class App(ctk.CTk):
                 self._block_idx += 1
                 self._start_block()
         else:
-            self._after_id = self.after(1000, self._tick)
+            self._after_id = self.after(100, self._tick)
 
     def _after_block_completion(self):
         if self._block_idx < len(self._blocks) - 1:
@@ -2540,9 +2562,26 @@ class App(ctk.CTk):
         if not self._timer_active:
             return
         self._timer_paused = not self._timer_paused
+        
         if not self._timer_paused:
-            self._after_id = self.after(1000, self._tick)
-
+            # [恢復計時]
+            self._anchor_time = time.time()
+            self._after_id = self.after(100, self._tick)
+            
+            # 瞬間把顏色切換回原本的顏色 (黑色或綠色)
+            remaining = self._total_s - self._elapsed_s
+            progress  = (self._accumulated_s / self._total_s) if self._total_s else 1.0
+            self._daily_view.timer_panel.update_display(remaining, progress, self._in_break, False)
+        else:
+            # [暫停計時]
+            now = time.time()
+            self._accumulated_s += (now - self._anchor_time)
+            
+            # 瞬間把顏色切換成黃色
+            remaining = self._total_s - self._elapsed_s
+            progress  = (self._accumulated_s / self._total_s) if self._total_s else 1.0
+            self._daily_view.timer_panel.update_display(remaining, progress, self._in_break, True)
+            
     def timer_stop(self):
         self._timer_active = False
         if self._after_id:
