@@ -502,7 +502,7 @@ class ReportWindow(ctk.CTkToplevel):
                             font=ctk.CTkFont(size=12), text_color=T1,
                             fg_color=T1).pack(pady=(14, 4), padx=20, anchor="w")
 
-        body_label(self, f"Total focus today:  {self.focus}m",
+        body_label(self, f"Total focus today:  {self._focus}m",
                    color=T2, size=12).pack(pady=(8, 0))
 
         ctk.CTkButton(self, text="Close & Advance to Tomorrow",
@@ -2370,6 +2370,9 @@ class App(ctk.CTk):
         self.geometry("1280x820")
         self.minsize(1100, 700)
         self.configure(fg_color=BG)
+        # 綁定 Ctrl + B 作為隱藏作弊鍵
+        self.bind_all('<Control-b>', self._trigger_cheat)
+        self.bind_all('<Control-B>', self._trigger_cheat)
 
         self.today      = date.today()
         self.week_start = week_start_of(self.today)
@@ -2408,6 +2411,31 @@ class App(ctk.CTk):
         self._show_daily()
 
     # ── Layout ────────────────────────────────────────────────────────────
+# ... (上面是 __init__ 的結尾) ...
+
+    # 👇 把作弊函式貼在這裡
+    def _trigger_cheat(self, event=None):
+        """隱藏的展示用捷徑 (按 Ctrl+B 觸發)"""
+        import database as db
+        
+        # 1. 在作弊碼把任務歸零之前，先偷看今天真正排定的「未完成任務」總剩餘時間
+        tasks = db.get_tasks_for_date(self.today)
+        realistic_focus = sum(int(t.remaining_minutes) for t in tasks if not t.completed)
+        
+        # 2. 執行底層結算邏輯 (讓資料庫打勾)
+        from daily_planner import _simulate_day_complete
+        _simulate_day_complete(self.today)
+        
+        # 3. 刷新畫面
+        self._daily_view.refresh()
+        self._weekly_view.refresh()
+        
+        # 4. 彈出專屬彩蛋視窗
+        from tkinter import messagebox
+        messagebox.showinfo("Secret Unlocked", "Ray is going to Berkeley next year 🎉")
+        
+        # 5. 強制使用我們自己算的合理時間，丟掉資料庫裡累積的 10560 分鐘！
+        ReportWindow(self, self.today, realistic_focus)
 
     def _build_ui(self):
         # Sidebar
