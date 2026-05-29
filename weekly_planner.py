@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Weekly Planner - Tomato Project Core Module
 """
@@ -452,7 +450,15 @@ def generate_schedule(week_start: date, hours_per_day: float) -> bool:
     class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
     
     try:
-        allocation = scheduler.allocate_weekly(tasks, today, hours_per_day, class_hours)
+        # ✨【程式夥伴修改】：修正 AttributeError: 'tuple' object has no attribute 'items'
+        # 原本 allocate_weekly 回傳的是一個 tuple (包含排程結果與可能的消息)，
+        # 我們需要解構賦值，取出第一個元素（即排程字典）。
+        result = scheduler.allocate_weekly(tasks, today, hours_per_day, class_hours)
+        if isinstance(result, tuple):
+            allocation = result[0]
+        else:
+            allocation = result
+            
     except scheduler.PomodoroDebtError as exc:
         clear()
         print(DEAD_MASCOT)

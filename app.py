@@ -1048,6 +1048,24 @@ class AdhocDialog(ctk.CTkToplevel):
         ctk.CTkButton(self, text="Add Task", fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
                       font=ctk.CTkFont(size=13), height=40,
                       command=self._save).pack(pady=16, padx=20, fill="x")
+        
+    def _add_subtask_row(self):
+        """動態新增一行子任務輸入框"""
+        row = ctk.CTkFrame(self._subtasks_frame, fg_color="transparent")
+        row.pack(fill="x", pady=2)
+
+        # 子任務名稱
+        name_ent = ctk.CTkEntry(row, placeholder_text="Subtask name",
+                                height=30, fg_color=CARD, border_color=BORDER, text_color=T1)
+        name_ent.pack(side="left", expand=True, fill="x", padx=(0, 5))
+
+        # 子任務時間(分鐘)
+        min_ent = ctk.CTkEntry(row, placeholder_text="Mins", width=60,
+                               height=30, fg_color=CARD, border_color=BORDER, text_color=T1)
+        min_ent.pack(side="left")
+
+        # 把這兩個框框記下來，之後 _save 的時候要讀取
+        self._subtask_widgets.append((name_ent, min_ent))
 
     def _auto_adjust_hours(self):
         """新增：自動偵測子任務時間並調高大任務時間的防呆機制"""
@@ -1101,6 +1119,7 @@ class AdhocDialog(ctk.CTkToplevel):
     def _save(self):
         name = self._name.get().strip()
         if not name:
+            from tkinter import messagebox
             messagebox.showwarning("Missing", "Task name is required.", parent=self)
             return
             
@@ -1108,6 +1127,7 @@ class AdhocDialog(ctk.CTkToplevel):
         try:
             hours = float(self._hours.get())
         except ValueError:
+            from tkinter import messagebox
             messagebox.showwarning("Invalid", "Hours must be a number.", parent=self)
             return
 
@@ -1131,8 +1151,17 @@ class AdhocDialog(ctk.CTkToplevel):
         imp  = int(self._imp_var.get())
         q    = scheduler.classify_quadrant(urg, imp)
         sc   = scheduler.compute_priority_score(urg, imp, q, self._today)
+        
+        # 💡 自動校正：如果子任務加起來超過原本設定的小時數，就以子任務為主
+        final_minutes = hours * 60
+        final_hours = hours
+        if total_sub_mins > final_minutes:
+            final_minutes = total_sub_mins
+            final_hours = final_minutes / 60.0
+
+        # 注意：這裡使用了 final_hours 和 final_minutes
         task = Task(id=None, name=name, urgency=urg, importance=imp,
-                    time_allocation=hours, remaining_minutes=hours * 60,
+                    time_allocation=final_hours, remaining_minutes=final_minutes,
                     deadline=self._today, quadrant=q, priority_score=sc,
                     source="adhoc", week_start=week_start, notes="")
         tid  = db.insert_task(task)
@@ -1436,7 +1465,7 @@ class WeeklyView(ctk.CTkFrame):
         for e in entries:
             by_day.setdefault(e["day_date"], []).append(e)
 
-        work_days = [ws + timedelta(days=i) for i in range(5)]
+        work_days = [ws + timedelta(days=i) for i in range(7)]
 
         if not entries:
             msg = card_frame(self._schedule_scroll)
@@ -1726,16 +1755,22 @@ class WeeklyView(ctk.CTkFrame):
         # ------------------------------------------
 
         try:
-            alloc = scheduler.allocate_weekly(
+            # 修改點 1：用 alloc, warnings 接住兩個回傳值
+            alloc, warnings = scheduler.allocate_weekly(
                 tasks, 
                 self._app.week_start, 
                 self._app.hours_per_day, 
                 class_hours,
-                strategy=strat  # <--- 關鍵修改：將策略參數傳給演算法大腦
+                strategy=strat
             )
         except scheduler.PomodoroDebtError as e:
             DeadMascotDialog(self._app, str(e))  #Claude修正
             return
+            
+        # 修改點 2：若有警告，跳出提示視窗
+        if warnings:
+            messagebox.showwarning("Pacing Warning", "\n".join(warnings))
+            
         db.clear_schedule_for_week(self._app.week_start)
         for day_date, entries in alloc.items():
             for task_id, minutes in entries:
@@ -1980,10 +2015,22 @@ class AddTaskDialog(ctk.CTkToplevel):
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
         debt_message = None  #Claude修正
         try:
-            # 讀取目前存在於 App 全域狀態中的排程策略
+            # 讀取全域策略設定
             strat = getattr(self._app, "schedule_strategy", "balanced")
-            alloc = scheduler.allocate_weekly(tasks, self._week_start,
-                                              self._app.hours_per_day, class_hours, strategy=strat)
+            
+            # 修改點 1：用 alloc, warnings 接住兩個回傳值
+            alloc, warnings = scheduler.allocate_weekly(
+                tasks, 
+                self._week_start,
+                self._app.hours_per_day, 
+                class_hours, 
+                strategy=strat
+            )
+            
+            # 修改點 2：若有警告，跳出提示視窗 (加入 parent=self 確保視窗顯示在最上層)
+            if warnings:
+                messagebox.showwarning("Pacing Warning", "\n".join(warnings), parent=self)
+                
             db.clear_schedule_for_week(self._week_start)
             for day_date, entries in alloc.items():
                 for task_id, minutes in entries:
