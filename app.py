@@ -16,6 +16,7 @@ from typing import Optional, List, Dict
 import database as db
 import scheduler
 from models import Task, Subtask, Quadrant, QUADRANT_LABELS, SplitMode
+from mascots import DEAD_MASCOT  #Claude修正
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 BG       = "#F7F5F0"
@@ -32,6 +33,14 @@ ARC_BG   = "#DDD9D2"
 ARC_FG   = "#1A1A1A"
 ARC_BRK  = "#5A9470"
 ARC_PAUSE = "#E3B341"
+
+# Eisenhower-quadrant card tints (Feature 5：依象限為任務卡上色).  #Claude修正
+QUAD_CLR = {                                                       #Claude修正
+    "UI":  "#FDEAEA",   # Urgent & Important       → light red     #Claude修正
+    "UU":  "#FDECD9",   # Urgent but Unimportant   → light orange  #Claude修正
+    "INU": "#FEF9E0",   # Important but Not Urgent → light yellow  #Claude修正
+    "N":   "#E8F5EC",   # Neither                  → light green   #Claude修正
+}
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("green")
@@ -452,6 +461,58 @@ class CompletionDialog(ctk.CTkToplevel):
         self._on_done()
 
 
+# ── Dead-mascot dialog (impossible schedule) ───────────────────────────────────
+
+class DeadMascotDialog(ctk.CTkToplevel):  #Claude修正
+    """GUI counterpart of the terminal planner's DEAD_MASCOT screen.  #Claude修正
+
+    Shown when scheduler.allocate_weekly() raises PomodoroDebtError — i.e. the
+    requested work physically cannot fit before its deadline. This mirrors
+    weekly_planner.py's terminal behaviour (clear screen + print DEAD_MASCOT)
+    inside the customtkinter GUI so the desktop app reacts the same way.
+    """
+
+    def __init__(self, app, message: str):  #Claude修正
+        super().__init__(app)
+        self.title("Pomodoro Debt Exceeded")
+        self.geometry("600x600")
+        self.resizable(False, False)
+        self.configure(fg_color=BG)
+        self.grab_set()
+        self._build(message)
+
+    def _build(self, message: str):
+        wrap = ctk.CTkScrollableFrame(self, fg_color=BG,
+                                      scrollbar_button_color=BORDER)
+        wrap.pack(fill="both", expand=True, padx=24, pady=(22, 12))
+
+        heading(wrap, "Schedule Impossible", size=20).pack(anchor="center",
+                                                            pady=(2, 10))
+
+        # ASCII mascot rendered in a monospace font so the art stays aligned.
+        ctk.CTkLabel(wrap, text=DEAD_MASCOT, justify="left",
+                     font=ctk.CTkFont(family="Courier New", size=12),
+                     text_color=ERR_CLR).pack(anchor="center", pady=(0, 14))
+
+        card = card_frame(wrap)
+        card.pack(fill="x")
+        body_label(card,
+                   "This workload cannot be finished before the deadline.",
+                   color=T1, size=13).pack(anchor="w", padx=16, pady=(14, 4))
+        ctk.CTkLabel(card, text=message, font=ctk.CTkFont(size=12),
+                     text_color=ERR_CLR, wraplength=500,
+                     justify="left").pack(anchor="w", padx=16, pady=(0, 6))
+        body_label(card,
+                   "Tip: push the deadline back, lower the estimated hours, "
+                   "or spread the task across more days.",
+                   color=T2, size=11).pack(anchor="w", padx=16, pady=(0, 14))
+
+        ctk.CTkButton(self, text="Got it — let me adjust",
+                      fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
+                      font=ctk.CTkFont(size=13), height=42,
+                      command=self.destroy).pack(pady=(0, 18), padx=24, fill="x")
+
+
 # ── Report window ─────────────────────────────────────────────────────────────
 
 class ReportWindow(ctk.CTkToplevel):
@@ -858,6 +919,7 @@ class DailyView(ctk.CTkFrame):
 
     def _task_row(self, t: Task):
         row = card_frame(self._task_scroll)
+        row.configure(fg_color=QUAD_CLR.get(t.quadrant.value, CARD))  #Claude修正
         row.pack(fill="x", pady=3)
         inner = ctk.CTkFrame(row, fg_color="transparent")
         inner.pack(fill="x", padx=12, pady=8)
@@ -1440,9 +1502,10 @@ class WeeklyView(ctk.CTkFrame):
             body_label(self._task_list_scroll, "No pending tasks.", color=T2).pack(pady=10)
         else:
             tasks_sorted = sorted(tasks, key=lambda x: x.deadline)
-            
+
             for t in tasks_sorted:
                 t_card = card_frame(self._task_list_scroll)
+                t_card.configure(fg_color=QUAD_CLR.get(t.quadrant.value, CARD))  #Claude修正
                 t_card.pack(fill="x", pady=4)
                 
                 top_row = ctk.CTkFrame(t_card, fg_color="transparent")
@@ -1671,7 +1734,7 @@ class WeeklyView(ctk.CTkFrame):
                 strategy=strat  # <--- 關鍵修改：將策略參數傳給演算法大腦
             )
         except scheduler.PomodoroDebtError as e:
-            messagebox.showerror("Schedule Impossible", str(e))
+            DeadMascotDialog(self._app, str(e))  #Claude修正
             return
         db.clear_schedule_for_week(self._app.week_start)
         for day_date, entries in alloc.items():
@@ -1915,6 +1978,7 @@ class AddTaskDialog(ctk.CTkToplevel):
         tasks = db.get_all_tasks(week_start=self._week_start, completed=False)
         work_days   = [self._week_start + timedelta(days=i) for i in range(7)] 
         class_hours = {d: db.get_class_hours_for_day(d) for d in work_days}
+        debt_message = None  #Claude修正
         try:
             # 讀取目前存在於 App 全域狀態中的排程策略
             strat = getattr(self._app, "schedule_strategy", "balanced")
@@ -1926,10 +1990,12 @@ class AddTaskDialog(ctk.CTkToplevel):
                     db.insert_schedule_entry(
                         self._week_start, day_date, task_id, minutes)
         except scheduler.PomodoroDebtError as e:
-            messagebox.showwarning("Schedule Warning", str(e), parent=self)
+            debt_message = str(e)  #Claude修正
 
         self.destroy()
         self._on_done()
+        if debt_message is not None:                   #Claude修正
+            DeadMascotDialog(self._app, debt_message)  #Claude修正
 
 # ── Term View ─────────────────────────────────────────────────────────────────
 
@@ -2527,8 +2593,53 @@ class IntroScreen(ctk.CTkToplevel):
 
     _INTRO_TITLE = "TaskFlow Pomodoro"   # 【區塊 A】大標題
 
-    _INTRO_PARAGRAPHS = [               # 【區塊 B】內文段落（一個字串 = 一段）
-        "介紹",
+    # 【區塊 B】內文段落（一個字串 = 一段）。  #Claude修正
+    # 以下整理自我們這次對話新增／說明過的所有功能，作為原本「介紹」的補充。  #Claude修正
+    _INTRO_PARAGRAPHS = [  #Claude修正
+        "TaskFlow Pomodoro 是一套「週計畫 + 每日番茄鐘」的讀書排程工具。"     #Claude修正
+        "你在 Weekly 規劃整週要完成的任務，系統會依照緊急／重要程度與死線，"
+        "自動把工作量分配到每一天；到了 Daily 再用番茄鐘專注執行。",
+
+        "WORKSPACES（三個分頁）\n"                                          #Claude修正
+        "• 📆 Daily — 今天要做的任務 ＋ 番茄鐘計時器。\n"
+        "• 📅 Weekly — 新增任務、設定時數與死線、產生整週排程。\n"
+        "• 📚 Term Schedule — 登記固定課表，排程時會自動避開上課時間。",
+
+        "HOW IT WORKS（四個步驟）\n"                                        #Claude修正
+        "1. 在 Term Schedule 輸入每週固定課程（只需設定一次）。\n"
+        "2. 在 Weekly 用「+ Add Task」加入任務：名稱、緊急度、重要度、"
+        "預估時數、死線，並可拆分子任務（sub-tasks）。\n"
+        "3. 按「⟳ Regenerate」產生本週排程；系統會避開課堂並依優先序分配。\n"
+        "4. 切到 Daily，按開始啟動番茄鐘，依排定的區塊專注與休息。",
+
+        "PRIORITY COLORS（艾森豪矩陣，任務卡會以底色標示優先序）\n"          #Claude修正
+        "• 🟥 UI  Urgent & Important（緊急且重要）— 權重 50%\n"
+        "• 🟧 UU  Urgent but Unimportant（緊急但不重要）— 權重 25%\n"
+        "• 🟨 INU Important but Not Urgent（重要但不緊急）— 權重 15%\n"
+        "• 🟩 N   Neither（皆非）— 權重 10%\n"
+        "權重越高、死線越近的任務，會被排在越前面、分到越多時間。",
+
+        "POMODORO MODES（番茄鐘兩種模式）\n"                                #Claude修正
+        "🍅 Chunk：每個番茄鐘區塊只專注一個任務，適合需要深度投入的工作。\n"
+        "🥪 Sandwich：把多個小任務「夾」進同一個番茄鐘區塊，並可設定每段"
+        "最短時間（min slice），避免切換太碎；適合把零碎小事一次清掉。",
+
+        "SCHEDULING STRATEGIES（兩種排程策略，可在 Weekly 切換）\n"         #Claude修正
+        "🎯 Deep Work：傾向把同一任務集中在連續時段，減少切換、利於專注。\n"
+        "⚖️ Balanced：在多個任務之間均衡推進，讓每件事都穩定往前，"
+        "避免某些任務拖到最後才開始。",
+
+        "SMART TOUCHES（貼心設計）\n"                                       #Claude修正
+        "• 難度記憶：完成後記錄難度，下週同名任務會據此微調建議時數。\n"
+        "• 死線壓力：越接近死線的任務，優先序會動態升高。\n"
+        "• 隔日結轉：每天結束的報告可把未完成任務自動帶到明天。\n"
+        "• 進度回填：在完成視窗用滑桿回報各任務／子任務的完成百分比，"
+        "剩餘時間會即時重算。",
+
+        "⚠️ POMODORO DEBT（番茄鐘債務警告）\n"                              #Claude修正
+        "如果某個任務在死線前「物理上塞不下」（例如時數填得過大），"
+        "系統會跳出一隻 R.I.P. 小蘑菇，代表這份排程不可能完成。"
+        "此時請延後死線、調低預估時數，或把工作分散到更多天。",
     ]
 
     # ────────────────────────────────────────────────────────────────────────
