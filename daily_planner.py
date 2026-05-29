@@ -525,15 +525,32 @@ def handle_completions(
         if not t or t.completed:
             continue
 
-        print(f"\n  Task: {t.name}  ({sl['minutes']:.0f}m allocated this block)")
+        block_mins = sl["minutes"]
+        print(f"\n  Task: {t.name}  ({block_mins:.0f}m allocated this block)")
+        print(f"  Remaining before this block: {t.remaining_minutes:.0f}m")
 
         if t.subtasks:
             pending = [s for s in t.subtasks if not s.completed]
             completed_any_subtask = False  # 新增一個標記，確認有沒有真的完成子任務
             
             for st in pending:
-                ans = input(f"    Subtask '{st.name}' complete? (y/n): ").strip().lower()
-                if ans == "y":
+                ans = input(f"\n    [{st.name}]  (estimated {st.estimated_minutes:.0f}m)").strip()
+                ans = input(f"    Did you work on this sub-task? (y/n): ").strip().lower()
+                if ans != "y":
+                    continue
+
+                any_checked = True
+                raw = input(f"    Completion % for '{st.name}' (0-100): ").strip()
+                try:
+                    pct = max(0.0, min(100.0, float(raw)))
+                except ValueError:
+                    pct = 0.0
+
+                done_mins = st.estimated_minutes * (pct / 100.0)
+                t.remaining_minutes = max(0.0, t.remaining_minutes - done_mins)
+                db.update_remaining_minutes(t.id, t.remaining_minutes)
+
+                if pct >= 99.0:
                     db.mark_subtask_complete(st.id, st.estimated_minutes)
                     st.completed = True
                     # 安全扣除：先在記憶體裡扣，確保不會小於 0
@@ -545,9 +562,15 @@ def handle_completions(
                 db.update_remaining_minutes(t.id, t.remaining_minutes)
                 
             all_done = all(s.completed for s in t.subtasks)
+
         else:
             ans      = input(f"    Task fully complete? (y/n): ").strip().lower()
             all_done = ans == "y"
+            if not all_done:
+                t.remaining_minutes = max(0.0, t.remaining_minutes - block_mins)
+                db.update_remaining_minutes(t.id, t.remaining_minutes)
+
+        print(f"  → '{t.name}' remaining: {t.remaining_minutes:.0f}m")
 
         if all_done:
             scheduler.recalculate_after_completion(t.id, today)

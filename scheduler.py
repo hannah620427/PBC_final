@@ -63,6 +63,13 @@ def allocate_weekly(
         class_hours = {}
 
     work_days = [start_date + timedelta(days=i) for i in range(7)]
+
+    # --- [新增：逾期任務處理機制] ---
+    # 如果任務已經過期，強制把它的死線展延到「今天」，迫使系統立刻排程
+    for t in tasks:
+        if t.deadline < start_date:
+            t.deadline = start_date
+    # -----------------------------
     
     day_remaining = {}
     for d in work_days:

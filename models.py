@@ -42,6 +42,7 @@ class Subtask:
     completed:          bool  = False
     estimated_minutes:  float = 30.0
     actual_minutes:     float = 0.0
+    remaining_minutes:  float = -1.0   # -1 = unset; DB read sets to estimated_minutes
     order_index:        int   = 0
 
 

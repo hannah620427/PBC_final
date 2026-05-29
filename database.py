@@ -47,6 +47,7 @@ def init_db() -> None:
                 completed         INTEGER NOT NULL DEFAULT 0,
                 estimated_minutes REAL    NOT NULL DEFAULT 30,
                 actual_minutes    REAL    NOT NULL DEFAULT 0,
+                remaining_minutes REAL    NOT NULL DEFAULT -1,
                 order_index       INTEGER NOT NULL DEFAULT 0
             );
 
@@ -102,6 +103,14 @@ def init_db() -> None:
                 UNIQUE(task_name, week_start)
             );
         """)
+        # Migration: add remaining_minutes to subtasks if not present
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(subtasks)").fetchall()]
+        if "remaining_minutes" not in cols:
+            conn.execute("ALTER TABLE subtasks ADD COLUMN remaining_minutes REAL NOT NULL DEFAULT -1")
+            conn.execute("""
+                UPDATE subtasks
+                SET remaining_minutes = CASE WHEN completed=1 THEN 0 ELSE estimated_minutes END
+            """)
 
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -239,25 +248,31 @@ def update_remaining_minutes(task_id: int, minutes: float) -> None:
 # ── Subtasks ──────────────────────────────────────────────────────────────────
 
 def _row_to_subtask(row: sqlite3.Row) -> Subtask:
+    est  = row["estimated_minutes"]
+    rem  = row["remaining_minutes"]
+    if rem < 0:          # -1 sentinel → not yet initialised
+        rem = 0.0 if bool(row["completed"]) else est
     return Subtask(
         id=row["id"],
         task_id=row["task_id"],
         name=row["name"],
         completed=bool(row["completed"]),
-        estimated_minutes=row["estimated_minutes"],
+        estimated_minutes=est,
         actual_minutes=row["actual_minutes"],
+        remaining_minutes=rem,
         order_index=row["order_index"],
     )
 
 
 def insert_subtask(subtask: Subtask) -> int:
+    rem = subtask.remaining_minutes if subtask.remaining_minutes >= 0 else subtask.estimated_minutes
     with _conn() as conn:
         cur = conn.execute(
             """INSERT INTO subtasks
-               (task_id, name, completed, estimated_minutes, actual_minutes, order_index)
-               VALUES (?,?,?,?,?,?)""",
+               (task_id, name, completed, estimated_minutes, actual_minutes, remaining_minutes, order_index)
+               VALUES (?,?,?,?,?,?,?)""",
             (subtask.task_id, subtask.name, int(subtask.completed),
-             subtask.estimated_minutes, subtask.actual_minutes, subtask.order_index),
+             subtask.estimated_minutes, subtask.actual_minutes, rem, subtask.order_index),
         )
         return cur.lastrowid
 
@@ -274,8 +289,17 @@ def get_subtasks(task_id: int) -> List[Subtask]:
 def mark_subtask_complete(subtask_id: int, actual_minutes: float) -> None:
     with _conn() as conn:
         conn.execute(
-            "UPDATE subtasks SET completed=1, actual_minutes=? WHERE id=?",
+            "UPDATE subtasks SET completed=1, actual_minutes=?, remaining_minutes=0 WHERE id=?",
             (actual_minutes, subtask_id),
+        )
+
+
+def update_subtask_remaining(subtask_id: int, remaining: float) -> None:
+    """Update sub-task remaining_minutes without marking it complete."""
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE subtasks SET remaining_minutes=? WHERE id=?",
+            (max(0.0, remaining), subtask_id),
         )
 
 
@@ -289,6 +313,15 @@ def insert_schedule_entry(
             """INSERT INTO weekly_schedule (week_start, day_date, task_id, allocated_minutes)
                VALUES (?,?,?,?)""",
             (week_start.isoformat(), day_date.isoformat(), task_id, allocated_minutes),
+        )
+
+def insert_schedule_entries_bulk(entries_data: List[tuple]) -> None:
+    """Batch insert to avoid opening/closing DB connection repeatedly."""
+    with _conn() as conn:
+        conn.executemany(
+            """INSERT INTO weekly_schedule (week_start, day_date, task_id, allocated_minutes)
+               VALUES (?,?,?,?)""",
+            entries_data
         )
 
 
