@@ -349,26 +349,29 @@ class CompletionDialog(ctk.CTkToplevel):
                                        after=st_rw)
                         else:
                             sl_fr.pack_forget()
-                            # 取消勾選 → slider 回到本次 dialog 的初始進度，重推主任務
+                            # 取消勾選 → slider 回到本次 dialog 的初始進度
                             init_pct = self._sub_init_pct.get(st_id, 0.0)
                             self._sub_sliders[st_id][1].set(init_pct)
                             self._refresh_sub_rem_label(st_id)
-                            t_id2 = self._sub_sliders[st_id][5]
-                            consumed = 0.0
-                            for sid2, data2 in self._sub_sliders.items():
-                                c2, p2, _, _, se2, tid2b = data2
-                                if tid2b == t_id2 and c2.get():
-                                    consumed += se2 * (p2.get() / 100.0)
-                            t2 = self._task_map.get(t_id2)
-                            if t2:
-                                _, t_tot3, _ = self._task_sliders[t_id2]
-                                new_rem3 = max(0.0, t2.remaining_minutes - consumed)
-                                new_pct3 = min(100.0,
-                                    (t_tot3 - new_rem3) / t_tot3 * 100)
-                                self._task_sliders[t_id2][0].set(new_pct3)
-                                self._refresh_task_rem_label(t_id2)
+                            
+                        # 🛡️ 修正：不論勾選或取消，都要重新計算「本次新增消耗的 Delta」並重推主任務
+                        t_id2 = self._sub_sliders[st_id][5]
+                        delta_consumed = 0.0
+                        for sid2, data2 in self._sub_sliders.items():
+                            c2, p2, _, _, se2, tid2b = data2
+                            if tid2b == t_id2 and c2.get():
+                                init_p = self._sub_init_pct.get(sid2, 0.0)
+                                delta_consumed += se2 * ((p2.get() - init_p) / 100.0)
+                                
+                        t2 = self._task_map.get(t_id2)
+                        if t2:
+                            _, t_tot3, _ = self._task_sliders[t_id2]
+                            new_rem3 = max(0.0, t2.remaining_minutes - delta_consumed)
+                            new_pct3 = min(100.0, (t_tot3 - new_rem3) / t_tot3 * 100)
+                            self._task_sliders[t_id2][0].set(new_pct3)
+                            self._refresh_task_rem_label(t_id2)
                     return on_toggle
-
+                
                 cb = ctk.CTkCheckBox(
                     st_row,
                     text=f"{st.name}",
@@ -388,20 +391,23 @@ class CompletionDialog(ctk.CTkToplevel):
                     def cmd(v):
                         p_lbl.configure(text=f"{int(float(v))}%")
                         self._refresh_sub_rem_label(st_id)
-                        # 重推主任務
-                        consumed = 0.0
+                        
+                        # 🛡️ 修正：重推主任務 (計算本次新增消耗的 Delta)
+                        delta_consumed = 0.0
                         for sid2, data2 in self._sub_sliders.items():
                             c2, p2, _, _, se2, tid2 = data2
                             if tid2 == t_id and c2.get():
-                                consumed += se2 * (p2.get() / 100.0)
+                                init_p = self._sub_init_pct.get(sid2, 0.0)
+                                delta_consumed += se2 * ((p2.get() - init_p) / 100.0)
+                                
                         t_obj = self._task_map.get(t_id)
                         if t_obj:
-                            new_rem2 = max(0.0, t_obj.remaining_minutes - consumed)
+                            new_rem2 = max(0.0, t_obj.remaining_minutes - delta_consumed)
                             new_pct2 = min(100.0, (t_tot - new_rem2) / t_tot * 100)
                             self._task_sliders[t_id][0].set(new_pct2)
                             self._refresh_task_rem_label(t_id)
                     return cmd
-
+                
                 ctk.CTkSlider(
                     sl_inner, from_=0, to=100,
                     variable=st_pct_var,
@@ -429,16 +435,20 @@ class CompletionDialog(ctk.CTkToplevel):
             )
 
             if has_checked_subs:
-                # ── 子任務優先：依各子任務 slider 計算消耗，扣主任務 ──────
-                consumed_total = 0.0
+                # ── 🛡️ 修正：子任務優先，依各子任務 slider 計算「本次新增消耗 Delta」，扣主任務 ──────
+                delta_consumed = 0.0
                 for st_id, data in self._sub_sliders.items():
                     check_var, pct_var, _, _, est_mins, t_id = data
                     if t_id != t.id or not check_var.get():
                         continue
+                    
+                    init_p = self._sub_init_pct.get(st_id, 0.0)
+                    delta_consumed += est_mins * ((pct_var.get() - init_p) / 100.0)
+                    
                     done_mins = est_mins * (pct_var.get() / 100.0)
-                    consumed_total += done_mins
                     st_rem = max(0.0, est_mins - done_mins)
                     st_obj = next((s for s in t.subtasks if s.id == st_id), None)
+                    
                     if pct_var.get() >= 99.0:
                         # 完成：標記完成，remaining 歸零
                         if st_obj:
@@ -451,20 +461,21 @@ class CompletionDialog(ctk.CTkToplevel):
                         if st_obj:
                             st_obj.remaining_minutes = st_rem
 
-                new_rem = max(0.0, t.remaining_minutes - consumed_total)
+                new_rem = max(0.0, t.remaining_minutes - delta_consumed)
             else:
                 # ── 無子任務勾選：直接用主任務 slider ────────────────────
                 pct_var, total_mins, _ = self._task_sliders[t.id]
                 new_rem = total_mins * (1.0 - pct_var.get() / 100.0)
 
-            if new_rem < 1.0:
+            # 🛡️ 防呆修正：降低強制歸零門檻，避免測試時微小任務(如5分鐘)提早被結案
+            if new_rem < 0.1:
                 new_rem = 0.0
 
             t.remaining_minutes = new_rem
             db.update_remaining_minutes(t.id, new_rem)
 
-            # 判斷主任務是否全部完成
-            all_subs_done = (not t.subtasks) or all(s.completed for s in t.subtasks)
+            # 判斷主任務是否全部完成: 必須是「有子任務且全做完」或「剩餘時間歸零」
+            all_subs_done = bool(t.subtasks) and all(s.completed for s in t.subtasks)
             if new_rem == 0.0 or all_subs_done:
                 t.remaining_minutes = 0.0
                 db.update_remaining_minutes(t.id, 0.0)
@@ -677,30 +688,28 @@ class TimerPanel(ctk.CTkFrame):
         # ── Timer card ────────────────────────────────────────────────────
         timer_card = card_frame(self)
         timer_card.configure(fg_color=TIMER_BG)
-        timer_card.pack(fill="x", padx=0, pady=(0, 14))
+        timer_card.pack(fill="both", expand=True, padx=0, pady=(0, 14))
 
+        # 1. 計時器圖形排在最上方
         self._canvas = TimerCanvas(timer_card)
-        self._canvas.pack(pady=(20, 8))
+        self._canvas.pack(pady=(24, 8))
 
-        # Block / task info
         self._block_lbl = body_label(timer_card, "", color=T2, size=12)
-        self._block_lbl.pack()
-        self._task_lbl = body_label(timer_card, "", color=T1, size=13)
-        self._task_lbl.pack(pady=(2, 16))
+        self._block_lbl.pack(pady=(0, 16))
 
-        # Controls
+        # 2. 把按鈕移到計時器正下方，保證絕對不會被擠出畫面
         btn_row = ctk.CTkFrame(timer_card, fg_color="transparent")
-        btn_row.pack(pady=(0, 20))
+        btn_row.pack(pady=(0, 16))
 
         self._start_btn = ctk.CTkButton(
-            btn_row, text="▶  Start", width=120, height=38,
+            btn_row, text=">  Start", width=120, height=38,
             fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
             font=ctk.CTkFont(size=13), corner_radius=20,
             command=self._on_start)
         self._start_btn.pack(side="left", padx=6)
 
         self._pause_btn = ctk.CTkButton(
-            btn_row, text="⏸  Pause", width=100, height=38,
+            btn_row, text="||  Pause", width=100, height=38,
             fg_color=CARD, hover_color=ARC_BG, text_color=T1,
             font=ctk.CTkFont(size=13), corner_radius=20,
             border_width=1, border_color=BORDER,
@@ -708,12 +717,16 @@ class TimerPanel(ctk.CTkFrame):
         self._pause_btn.pack(side="left", padx=6)
 
         self._stop_btn = ctk.CTkButton(
-            btn_row, text="■  Stop", width=90, height=38,
+            btn_row, text="x  Stop", width=90, height=38,
             fg_color=CARD, hover_color="#FDEAEA", text_color=ERR_CLR,
             font=ctk.CTkFont(size=13), corner_radius=20,
             border_width=1, border_color="#E8CECE",
             command=self._on_stop, state="disabled")
         self._stop_btn.pack(side="left", padx=6)
+
+        # 3. 任務卡片容器排在最後面，填滿剩餘空間
+        self._task_list_frame = ctk.CTkFrame(timer_card, fg_color="transparent")
+        self._task_list_frame.pack(fill="both", expand=True, padx=30, pady=(0, 16))
 
     # ── Slider callbacks ──────────────────────────────────────────────────
     def _on_focus_change(self, v):
@@ -741,12 +754,17 @@ class TimerPanel(ctk.CTkFrame):
 
         task_map = {t.id: t for t in tasks}
         schedule = db.get_schedule_for_date(self._app.today)
-        slices   = [
+        
+        # 修正：精準過濾，只允許「還存在於未完成清單 (task_map) 中」的任務進入排程
+        slices = [
             {"task_id": e["task_id"], "minutes": e["allocated_minutes"]}
             for e in schedule
-            if not task_map.get(e["task_id"],
-               Task(None,"",1,1,0,0,self._app.today,Quadrant.N,0)).completed
+            if e["task_id"] in task_map
         ]
+        
+        # 依據 priority_score 由高到低進行排序，確保緊急任務優先排入區塊
+        slices.sort(key=lambda s: task_map[s["task_id"]].priority_score, reverse=True)
+
         if not slices:
             messagebox.showinfo("All Done", "All of today's tasks are complete!")
             return
@@ -829,14 +847,32 @@ class TimerPanel(ctk.CTkFrame):
                        is_break: bool):
         self._block_lbl.configure(
             text=f"{'Break' if is_break else 'Block'} {idx+1} / {total}")
+            
+        # 清除舊的任務卡片
+        for w in self._task_list_frame.winfo_children():
+            w.destroy()
+            
         if not is_break:
-            names = ", ".join(
-                task_map[s["task_id"]].name
-                for s in block.task_slices
-                if s["task_id"] in task_map)
-            self._task_lbl.configure(text=names)
+            # 動態生成與 Daily/Weekly 風格一致的塊狀卡片
+            for s in block.task_slices:
+                if s["task_id"] in task_map:
+                    t = task_map[s["task_id"]]
+                    mins = s["minutes"]
+                    
+                    # 建立卡片，帶入艾森豪矩陣的優先序顏色
+                    card = card_frame(self._task_list_frame)
+                    card.configure(fg_color=QUAD_CLR.get(t.quadrant.value, CARD))
+                    card.pack(fill="x", pady=3)
+                    
+                    inner = ctk.CTkFrame(card, fg_color="transparent")
+                    inner.pack(fill="x", padx=12, pady=6)
+                    
+                    body_label(inner, t.name, size=12, color=T1).pack(side="left")
+                    body_label(inner, f"{mins:.0f}m", size=12, color=T2).pack(side="right")
         else:
-            self._task_lbl.configure(text="Rest up  ☕")
+            # 休息時間顯示
+            lbl = body_label(self._task_list_frame, "Rest up", justify="center")
+            lbl.pack(pady=10)
 
     def on_block_end(self, block, task_map: Dict, today: date, on_done):
         CompletionDialog(self._app, block, task_map, today, on_done)
@@ -844,7 +880,11 @@ class TimerPanel(ctk.CTkFrame):
     def reset_display(self):
         self._canvas.reset()
         self._block_lbl.configure(text="")
-        self._task_lbl.configure(text="")
+        
+        # 清空卡片容器
+        for w in self._task_list_frame.winfo_children():
+            w.destroy()
+            
         self._start_btn.configure(state="normal")
         self._pause_btn.configure(state="disabled", text="⏸  Pause")
         self._stop_btn.configure(state="disabled")
@@ -1534,7 +1574,7 @@ class WeeklyView(ctk.CTkFrame):
             days_left = (t.deadline - self._app.today).days
             if days_left > 7:
                 dl_color = T2              # 灰色 (安全)
-            elif days_left > 3:
+            elif days_left > 5:
                 dl_color = "#E3B341"       # 橘黃色 (警告)
             else:
                 dl_color = ERR_CLR         # 紅色 (緊急)
@@ -1542,9 +1582,40 @@ class WeeklyView(ctk.CTkFrame):
             dl_str = t.deadline.strftime('%b %d (%a)')
             body_label(info_row, f"DL: {dl_str}", color=dl_color, size=11).pack(side="left")
             
-            # 使用我們新加的 format_hm 工具
-            time_str = f"({format_hm(t.time_allocation*60)} / {format_hm(t.remaining_minutes)})"
-            body_label(info_row, time_str, color=T2, size=11).pack(side="right")
+            # ── 升級：進度條與詳細時間切換按鈕 ──
+            time_frame = ctk.CTkFrame(info_row, fg_color="transparent")
+            time_frame.pack(side="right")
+
+            total_m = max(1.0, t.time_allocation * 60)
+            rem_m = max(0.0, t.remaining_minutes)
+            # 計算完成進度百分比 (0.0 ~ 1.0)
+            prog_val = min(1.0, max(0.0, (total_m - rem_m) / total_m))
+
+            # 1. 建立詳細時間標籤 (預設不 pack，所以先隱藏起來)
+            time_str = f"原定 {format_hm(total_m)} / 剩 {format_hm(rem_m)}"
+            time_lbl = body_label(time_frame, time_str, color=T2, size=11)
+
+            # 2. 展開/收起詳細數字的小按鈕 (最右側)
+            def make_time_toggle(lbl=time_lbl):
+                def _toggle():
+                    if lbl.winfo_manager():
+                        lbl.pack_forget()  # 如果已經顯示，就收合
+                    else:
+                        lbl.pack(side="right", padx=(0, 8)) # 如果隱藏，就顯示出來
+                return _toggle
+
+            ctk.CTkButton(
+                time_frame, text="⏱", width=24, height=24,
+                fg_color="transparent", hover_color=ARC_BG, text_color=T2,
+                font=ctk.CTkFont(size=14), corner_radius=4,
+                command=make_time_toggle()
+            ).pack(side="right")
+
+            # 3. 視覺化進度條 (在按鈕的左邊)
+            prog_bar = ctk.CTkProgressBar(time_frame, width=70, height=8, 
+                                          progress_color=T1, fg_color=BORDER)
+            prog_bar.set(prog_val)
+            prog_bar.pack(side="right", padx=(0, 6))
             
             # --- 第三列：隱藏的子任務 ---
             sub_container = ctk.CTkFrame(t_card, fg_color="transparent")
@@ -1555,7 +1626,38 @@ class WeeklyView(ctk.CTkFrame):
                     sub_item.pack(fill="x", pady=2)
                     sm, color = ("✓", OK_CLR) if st.completed else ("·", T2)
                     body_label(sub_item, f"  {sm} {st.name}", color=color, size=11).pack(side="left")
-                    body_label(sub_item, f"({format_hm(st.estimated_minutes)} / {format_hm(st.remaining_minutes)})", color=T2, size=11).pack(side="right")
+                    
+                    # ── 升級：子任務的進度條與詳細時間切換按鈕 ──
+                    sub_time_frame = ctk.CTkFrame(sub_item, fg_color="transparent")
+                    sub_time_frame.pack(side="right")
+
+                    st_total = max(1.0, st.estimated_minutes)
+                    st_rem   = max(0.0, st.remaining_minutes)
+                    st_prog  = min(1.0, max(0.0, (st_total - st_rem) / st_total))
+
+                    sub_time_str = f"原定 {format_hm(st_total)} / 剩 {format_hm(st_rem)}"
+                    sub_time_lbl = body_label(sub_time_frame, sub_time_str, color=T2, size=11)
+
+                    def make_sub_time_toggle(lbl=sub_time_lbl):
+                        def _toggle():
+                            if lbl.winfo_manager():
+                                lbl.pack_forget()
+                            else:
+                                lbl.pack(side="right", padx=(0, 8))
+                        return _toggle
+
+                    ctk.CTkButton(
+                        sub_time_frame, text="⏱", width=22, height=22,
+                        fg_color="transparent", hover_color=ARC_BG, text_color=T2,
+                        font=ctk.CTkFont(size=12), corner_radius=4,
+                        command=make_sub_time_toggle()
+                    ).pack(side="right")
+
+                    # 子任務的進度條稍微做小一點 (50x6)，以建立與主任務 (70x8) 不同的視覺層級
+                    sub_prog_bar = ctk.CTkProgressBar(sub_time_frame, width=50, height=6, 
+                                                      progress_color=T1, fg_color=BORDER)
+                    sub_prog_bar.set(st_prog)
+                    sub_prog_bar.pack(side="right", padx=(0, 6))
                     
                 def make_toggle(c=sub_container, b=toggle_btn):
                     return lambda: (c.pack(fill="x", padx=12, pady=(0, 8)), b.configure(text="-")) if not c.winfo_manager() else (c.pack_forget(), b.configure(text="+"))
