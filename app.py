@@ -2197,31 +2197,38 @@ class AddClassDialog(ctk.CTkToplevel):
                                   text_color=T1)
         self._end.pack(fill="x", pady=(2, 0))
 
-        days21    = next_21_days()
-        day_strs  = [date_label(d) for d in days21]
-        self._day_map = dict(zip(day_strs, days21))
-
+        # 刪除原本的 days21, day_strs, self._day_map 相關程式碼
+        
+        # ── 改用 DateEntry 實作 TERM START ──
         section_label(scroll, "TERM START").pack(anchor="w", pady=(8, 0))
-        self._tstart_var = tk.StringVar(value=day_strs[0])
-        ctk.CTkOptionMenu(scroll, values=day_strs,
-                          variable=self._tstart_var,
-                          font=ctk.CTkFont(size=12),
-                          fg_color=CARD, button_color=T1,
-                          button_hover_color=SIDE_SEL,
-                          text_color=T1, dropdown_text_color=T1,
-                          dropdown_fg_color=CARD).pack(fill="x",
-                                                        pady=(2, 10))
+        self._tstart_entry = DateEntry(
+            scroll, 
+            width=16,
+            background="#1A1A1A",
+            foreground="white", 
+            borderwidth=0,
+            font=("Arial", 12), 
+            date_pattern="yyyy-mm-dd",
+            selectbackground="#2C7A45"
+        )
+        self._tstart_entry.set_date(date.today())
+        self._tstart_entry.pack(anchor="w", pady=(2, 10))
 
+        # ── 改用 DateEntry 實作 TERM END ──
         section_label(scroll, "TERM END").pack(anchor="w")
-        self._tend_var = tk.StringVar(value=day_strs[-1])
-        ctk.CTkOptionMenu(scroll, values=day_strs,
-                          variable=self._tend_var,
-                          font=ctk.CTkFont(size=12),
-                          fg_color=CARD, button_color=T1,
-                          button_hover_color=SIDE_SEL,
-                          text_color=T1, dropdown_text_color=T1,
-                          dropdown_fg_color=CARD).pack(fill="x",
-                                                        pady=(2, 10))
+        self._tend_entry = DateEntry(
+            scroll, 
+            width=16,
+            background="#1A1A1A",
+            foreground="white", 
+            borderwidth=0,
+            font=("Arial", 12), 
+            date_pattern="yyyy-mm-dd",
+            selectbackground="#2C7A45"
+        )
+        # 預設學期結束日大約在 4 個月 (120天) 後
+        self._tend_entry.set_date(date.today() + timedelta(days=120))
+        self._tend_entry.pack(anchor="w", pady=(2, 10))
 
         section_label(scroll, "LOCATION (optional)").pack(anchor="w")
         self._loc = ctk.CTkEntry(scroll, height=36,
@@ -2258,8 +2265,9 @@ class AddClassDialog(ctk.CTkToplevel):
         days_full = ["Monday","Tuesday","Wednesday","Thursday",
                      "Friday","Saturday","Sunday"]
         dow   = days_full.index(self._dow_var.get())
-        ts    = self._day_map.get(self._tstart_var.get(), date.today())
-        te    = self._day_map.get(self._tend_var.get(), date.today())
+        # 改為直接從 DateEntry 取得 date 物件
+        ts    = self._tstart_entry.get_date()
+        te    = self._tend_entry.get_date()
         loc   = self._loc.get().strip()
         db.insert_term_class(name, dow, start, end, ts, te, loc)
         self.destroy()
@@ -2349,23 +2357,35 @@ class EditClassDialog(ctk.CTkToplevel):
         self._end.insert(0, self._cls["end_time"])
         self._end.pack(fill="x", pady=(2, 0))
 
-        # ── Term start / end（用文字輸入，格式 YYYY-MM-DD）────────────────
-        section_label(scroll, "TERM START (YYYY-MM-DD)").pack(
-            anchor="w", pady=(8, 0))
-        self._tstart = ctk.CTkEntry(scroll, height=36,
-                                     font=ctk.CTkFont(size=13),
-                                     fg_color=CARD, border_color=BORDER,
-                                     text_color=T1)
-        self._tstart.insert(0, self._cls["term_start"])
-        self._tstart.pack(fill="x", pady=(2, 10))
+        # ── Term start / end（改用 DateEntry 月曆元件）────────────────
+        section_label(scroll, "TERM START").pack(anchor="w", pady=(8, 0))
+        self._tstart_entry = DateEntry(
+            scroll, 
+            width=16,
+            background="#1A1A1A",
+            foreground="white", 
+            borderwidth=0,
+            font=("Arial", 12), 
+            date_pattern="yyyy-mm-dd",
+            selectbackground="#2C7A45"
+        )
+        # 讀取資料庫中舊的日期並設定為月曆預設值
+        self._tstart_entry.set_date(date.fromisoformat(self._cls["term_start"]))
+        self._tstart_entry.pack(anchor="w", pady=(2, 10))
 
-        section_label(scroll, "TERM END (YYYY-MM-DD)").pack(anchor="w")
-        self._tend = ctk.CTkEntry(scroll, height=36,
-                                   font=ctk.CTkFont(size=13),
-                                   fg_color=CARD, border_color=BORDER,
-                                   text_color=T1)
-        self._tend.insert(0, self._cls["term_end"])
-        self._tend.pack(fill="x", pady=(2, 10))
+        section_label(scroll, "TERM END").pack(anchor="w")
+        self._tend_entry = DateEntry(
+            scroll, 
+            width=16,
+            background="#1A1A1A",
+            foreground="white", 
+            borderwidth=0,
+            font=("Arial", 12), 
+            date_pattern="yyyy-mm-dd",
+            selectbackground="#2C7A45"
+        )
+        self._tend_entry.set_date(date.fromisoformat(self._cls["term_end"]))
+        self._tend_entry.pack(anchor="w", pady=(2, 10))
 
         # ── Location ───────────────────────────────────────────────────────
         section_label(scroll, "LOCATION (optional)").pack(anchor="w")
@@ -2413,8 +2433,8 @@ class EditClassDialog(ctk.CTkToplevel):
         name  = self._name.get().strip()
         start = self._start.get().strip()
         end   = self._end.get().strip()
-        ts    = self._tstart.get().strip()
-        te    = self._tend.get().strip()
+        ts    = self._tstart_entry.get_date()
+        te    = self._tend_entry.get_date()
 
         if not name or not start or not end:
             messagebox.showwarning("Missing",
@@ -2435,12 +2455,7 @@ class EditClassDialog(ctk.CTkToplevel):
                                    parent=self)
             return
 
-        for label, val in [("Term start", ts), ("Term end", te)]:
-            if not self._valid_date(val):
-                messagebox.showwarning("Invalid",
-                                       f"{label} must be YYYY-MM-DD.",
-                                       parent=self)
-                return
+        
 
         if te < ts:
             messagebox.showwarning("Invalid",
@@ -2454,8 +2469,7 @@ class EditClassDialog(ctk.CTkToplevel):
         # database.py 沒有 update_term_class，用 delete + insert 實現
         db.delete_term_class(self._cls["id"])
         db.insert_term_class(
-            name, dow, start, end,
-            date.fromisoformat(ts), date.fromisoformat(te), loc)
+            name, dow, start, end, ts, te, loc)
 
         self.destroy()
         self._on_done()
@@ -2666,15 +2680,15 @@ class IntroScreen(ctk.CTkToplevel):
         "• 🟩 N   Neither（皆非）— 權重 10%\n"
         "權重越高、死線越近的任務，會被排在越前面、分到越多時間。",
 
+        "SCHEDULING STRATEGIES（兩種排程策略，可在 Weekly 切換）\n"         #Claude修正
+        "🎯 Deep Work：傾向把同一任務集中在連續時段，減少切換、利於專注。\n"
+        "⚖️ Balanced： 在多個任務之間均衡推進，讓每件事都穩定往前，"
+        "避免某些任務拖到最後才開始。",
+
         "POMODORO MODES（番茄鐘兩種模式）\n"                                #Claude修正
         "🍅 Chunk：每個番茄鐘區塊只專注一個任務，適合需要深度投入的工作。\n"
         "🥪 Sandwich：把多個小任務「夾」進同一個番茄鐘區塊，並可設定每段"
         "最短時間（min slice），避免切換太碎；適合把零碎小事一次清掉。",
-
-        "SCHEDULING STRATEGIES（兩種排程策略，可在 Weekly 切換）\n"         #Claude修正
-        "🎯 Deep Work：傾向把同一任務集中在連續時段，減少切換、利於專注。\n"
-        "⚖️ Balanced：在多個任務之間均衡推進，讓每件事都穩定往前，"
-        "避免某些任務拖到最後才開始。",
 
         "SMART TOUCHES（貼心設計）\n"                                       #Claude修正
         "• 難度記憶：完成後記錄難度，下週同名任務會據此微調建議時數。\n"

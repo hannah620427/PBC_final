@@ -167,9 +167,11 @@ def get_all_tasks(
 ) -> List[Task]:
     query  = "SELECT * FROM tasks WHERE 1=1"
     params: list = []
-    if week_start is not None:
-        query += " AND week_start=?"
-        params.append(week_start.isoformat())
+    # --- 將這三行註解掉，不再限制只能看今天的任務！ ---
+    # if week_start is not None:
+    #     query += " AND week_start=?"
+    #     params.append(week_start.isoformat())
+    # --------------------------------------------------
     if source is not None:
         query += " AND source=?"
         params.append(source)
@@ -190,7 +192,7 @@ def get_tasks_for_date(day: date) -> List[Task]:
     """All incomplete tasks scheduled for *day* via weekly_schedule."""
     with _conn() as conn:
         rows = conn.execute(
-            """SELECT t.* FROM tasks t
+            """SELECT DISTINCT t.* FROM tasks t
                JOIN weekly_schedule ws ON ws.task_id = t.id
                WHERE ws.day_date = ? AND t.completed = 0
                ORDER BY t.priority_score DESC""",
@@ -328,7 +330,8 @@ def insert_schedule_entries_bulk(entries_data: List[tuple]) -> None:
 def clear_schedule_for_week(week_start: date) -> None:
     with _conn() as conn:
         conn.execute(
-            "DELETE FROM weekly_schedule WHERE week_start=?",
+            # 這裡非常關鍵：一定要是 day_date，不能是 week_start
+            "DELETE FROM weekly_schedule WHERE day_date >= ?",
             (week_start.isoformat(),),
         )
 
