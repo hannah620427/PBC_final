@@ -2913,6 +2913,11 @@ class App(ctk.CTk):
         self._start_block()
 
     def _start_block(self):
+        # ── 裝上安全鎖：確保沒有其他計時器在背景搗亂 ──
+        if self._after_id is not None:
+            self.after_cancel(self._after_id)
+            self._after_id = None
+        # ──────────────────────────────────────────────
         while self._block_idx < len(self._blocks):
             if not self._blocks[self._block_idx].completed:
                 break
@@ -2934,6 +2939,11 @@ class App(ctk.CTk):
         self._after_id = self.after(100, self._tick)
 
     def _start_break(self):
+        # ── 裝上安全鎖 ──
+        if self._after_id is not None:
+            self.after_cancel(self._after_id)
+            self._after_id = None
+        # ────────────────
         self._in_break      = True
         self._elapsed_s     = 0
         self._accumulated_s = 0.0                 # [優化]
@@ -2986,6 +2996,12 @@ class App(ctk.CTk):
         
         if not self._timer_paused:
             # [恢復計時]
+            # ── 裝上安全鎖 ──
+            if self._after_id is not None:
+                self.after_cancel(self._after_id)
+                self._after_id = None
+            # ────────────────
+                
             self._anchor_time = time.time()
             self._after_id = self.after(100, self._tick)
             
@@ -3005,8 +3021,9 @@ class App(ctk.CTk):
             
     def timer_stop(self):
         self._timer_active = False
-        if self._after_id:
+        if self._after_id is not None:
             self.after_cancel(self._after_id)
+            self._after_id = None  # 補上這行，把變數徹底清空
 
     def _finish(self):
         self._timer_active = False
