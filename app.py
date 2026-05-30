@@ -627,22 +627,28 @@ class TimerPanel(ctk.CTkFrame):
         focus_col.pack(side="left", expand=True, fill="x", padx=(0, 8))
         self._focus_lbl = body_label(focus_col, "Focus: 50m", size=12, color=T2)
         self._focus_lbl.pack(anchor="w")
-        self._focus_var = tk.IntVar(value=50)
-        ctk.CTkSlider(focus_col, from_=5, to=120, number_of_steps=23,
-                      variable=self._focus_var, button_color=T1,
-                      progress_color=T1, button_hover_color=SIDE_SEL,
-                      command=self._on_focus_change).pack(fill="x")
+        # 移除 IntVar，直接將 Slider 存成變數
+        self._focus_slider = ctk.CTkSlider(
+            focus_col, from_=5, to=120, number_of_steps=23,
+            button_color=T1, progress_color=T1, button_hover_color=SIDE_SEL,
+            command=self._on_focus_change
+        )
+        self._focus_slider.set(50)  # 手動設定預設值為 50
+        self._focus_slider.pack(fill="x")
 
         # Break slider
         brk_col = ctk.CTkFrame(row1, fg_color="transparent")
         brk_col.pack(side="left", expand=True, fill="x")
         self._brk_lbl = body_label(brk_col, "Break: 10m", size=12, color=T2)
         self._brk_lbl.pack(anchor="w")
-        self._brk_var = tk.IntVar(value=10)
-        ctk.CTkSlider(brk_col, from_=1, to=30, number_of_steps=29,
-                      variable=self._brk_var, button_color=T1,
-                      progress_color=T1, button_hover_color=SIDE_SEL,
-                      command=self._on_brk_change).pack(fill="x")
+        # 移除 IntVar，直接將 Slider 存成變數
+        self._brk_slider = ctk.CTkSlider(
+            brk_col, from_=1, to=30, number_of_steps=29,
+            button_color=T1, progress_color=T1, button_hover_color=SIDE_SEL,
+            command=self._on_brk_change
+        )
+        self._brk_slider.set(10)  # 手動設定預設值為 10
+        self._brk_slider.pack(fill="x")
 
         row2 = ctk.CTkFrame(cfg, fg_color="transparent")
         row2.pack(fill="x", padx=16, pady=(0, 12))
@@ -712,7 +718,8 @@ class TimerPanel(ctk.CTkFrame):
         v = int(v)
         self._focus_lbl.configure(text=f"Focus: {v}m")
         auto_brk = max(5, v // 5)
-        self._brk_var.set(auto_brk)
+        # 改用 _brk_slider 本身的 set 方法
+        self._brk_slider.set(auto_brk)
         self._brk_lbl.configure(text=f"Break: {auto_brk}m")
 
     def _on_brk_change(self, v):
@@ -738,9 +745,10 @@ class TimerPanel(ctk.CTkFrame):
         if not slices:
             messagebox.showinfo("All Done", "All of today's tasks are complete!")
             return
-
-        focus  = int(self._focus_var.get())
-        brk    = int(self._brk_var.get())
+        
+        # 改為向 slider 直接要數字
+        focus  = int(self._focus_slider.get())
+        brk    = int(self._brk_slider.get())
         mode   = (SplitMode.CHUNK if self._mode_var.get() == "Chunk"
                   else SplitMode.SANDWICH)
         # ---- 修改：獲取使用者輸入的最小切片時間 ----
