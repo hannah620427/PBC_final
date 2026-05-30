@@ -307,12 +307,6 @@ def build_daily_blocks(
 ) -> List[PomodoroBlock]:
     """
     Convert a flat list of task time-slices into ordered PomodoroBlocks.
-
-    task_slices: [{"task_id": int, "minutes": float}, ...]
-
-    CHUNK mode:    one task per block; carry over if it needs multiple blocks.
-    SANDWICH mode: pack as many tasks as possible per block, respecting
-                   min_slice_minutes so no task gets a trivially short slot.
     """
     blocks: List[PomodoroBlock] = []
     queue  = [(s["task_id"], float(s["minutes"])) for s in task_slices]
@@ -325,21 +319,43 @@ def build_daily_blocks(
             task_id, minutes = queue[0]
             take = min(minutes, float(focus_minutes))
             current_slices.append({"task_id": task_id, "minutes": round(take, 1)})
-            if take >= minutes:
+            if take >= minutes - 0.01:  # 浮點數安全判定
                 queue.pop(0)
             else:
                 queue[0] = (task_id, minutes - take)
 
         else:  # SANDWICH
             remaining_focus = float(focus_minutes)
-            while queue and remaining_focus >= min_slice_minutes:
+            while queue and remaining_focus > 0.01:
                 task_id, minutes = queue[0]
                 take = min(minutes, remaining_focus)
-                if take < min_slice_minutes:
-                    break   # slice would be too small; leave for next block
+
+                # 💡 核心修正：優雅處理餘數，絕不死迴圈
+                # 只有當「為塞滿目前區塊的尾巴，而把下一個大任務切得比 min_slice 還碎」時，才拒絕
+                if take < min_slice_minutes and minutes > take:
+                    if current_slices:
+                        # 區塊裡已經有任務了，那就讓這個區塊提早結束 (容許剩餘幾分鐘彈性時間)
+                        # 把這個大任務完整保留到下一個番茄鐘！
+                        break
+                    else:
+                        # 如果區塊是空的 (通常是因為 Focus 設得比 Min Slice 還小)
+                        # 為了讓系統能繼續前進，必須無視 Min Slice 強制排入
+                        pass
+
                 current_slices.append({"task_id": task_id, "minutes": round(take, 1)})
                 remaining_focus -= take
-                if take >= minutes:
+                
+                if take >= minutes - 0.01:
+                    queue.pop(0)
+                else:
+                    queue[0] = (task_id, minutes - take)
+
+            # 極端防呆：如果跑完迴圈卻甚麼都沒排進去，強行抓第一個任務打破死結
+            if not current_slices and queue:
+                task_id, minutes = queue[0]
+                take = min(minutes, float(focus_minutes))
+                current_slices.append({"task_id": task_id, "minutes": round(take, 1)})
+                if take >= minutes - 0.01:
                     queue.pop(0)
                 else:
                     queue[0] = (task_id, minutes - take)

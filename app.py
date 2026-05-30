@@ -653,23 +653,25 @@ class TimerPanel(ctk.CTkFrame):
         row2 = ctk.CTkFrame(cfg, fg_color="transparent")
         row2.pack(fill="x", padx=16, pady=(0, 12))
         body_label(row2, "Mode:", size=12, color=T2).pack(side="left", padx=(0, 8))
-        self._mode_var = tk.StringVar(value="Chunk")
-        ctk.CTkSegmentedButton(row2, values=["Chunk", "Sandwich"],
-                               variable=self._mode_var,
-                               font=ctk.CTkFont(size=12),
-                               selected_color=T1, selected_hover_color=SIDE_SEL,
-                               unselected_color=BORDER,
-                               text_color="#FFF",
-                               unselected_hover_color=ARC_BG).pack(side="left")
-        # ---- 新增：最小切片時間變數與介面元件 ----
-        self._min_slice_var = ctk.StringVar(value="10")  # 預設 10 分鐘
         
-        # 建立文字標籤
+        self._mode_var = ctk.StringVar(value="Chunk")
+        self._mode_btn = ctk.CTkSegmentedButton(
+            row2, values=["Chunk", "Sandwich"],
+            variable=self._mode_var,
+            font=ctk.CTkFont(size=12),
+            selected_color=T1, selected_hover_color=SIDE_SEL,
+            unselected_color=BORDER, text_color="#FFF",
+            unselected_hover_color=ARC_BG
+        )
+        self._mode_btn.pack(side="left")
+
+        # ---- 最小切片時間元件 ----
         min_slice_label = ctk.CTkLabel(cfg, text="Min Slice (min):", font=ctk.CTkFont(family="Arial", size=12), text_color=T2)
         min_slice_label.pack(side="left", padx=(15, 5))
         
-        # 建立輸入框
-        self._min_slice_entry = ctk.CTkEntry(cfg, width=50, textvariable=self._min_slice_var, justify="center")
+        # 🛡️ 移除 StringVar，直接對 Entry 操作
+        self._min_slice_entry = ctk.CTkEntry(cfg, width=50, justify="center")
+        self._min_slice_entry.insert(0, "10")  # 手動填入預設值
         self._min_slice_entry.pack(side="left", padx=5)
 
         # ── Timer card ────────────────────────────────────────────────────
@@ -718,9 +720,12 @@ class TimerPanel(ctk.CTkFrame):
         v = int(v)
         self._focus_lbl.configure(text=f"Focus: {v}m")
         auto_brk = max(5, v // 5)
-        # 改用 _brk_slider 本身的 set 方法
-        self._brk_slider.set(auto_brk)
-        self._brk_lbl.configure(text=f"Break: {auto_brk}m")
+        # 🛡️ 效能防火牆：只有當休息時間「真的改變時」，才去操作另一個拉桿
+        current_brk = int(self._brk_slider.get())
+        if current_brk != auto_brk:
+            self._brk_slider.set(auto_brk)
+            self._brk_lbl.configure(text=f"Break: {auto_brk}m")
+        
 
     def _on_brk_change(self, v):
         self._brk_lbl.configure(text=f"Break: {int(v)}m")
@@ -749,15 +754,26 @@ class TimerPanel(ctk.CTkFrame):
         # 改為向 slider 直接要數字
         focus  = int(self._focus_slider.get())
         brk    = int(self._brk_slider.get())
-        mode   = (SplitMode.CHUNK if self._mode_var.get() == "Chunk"
-                  else SplitMode.SANDWICH)
-        # ---- 修改：獲取使用者輸入的最小切片時間 ----
+        
+        mode_val = self._mode_var.get()
+        mode = SplitMode.CHUNK if mode_val == "Chunk" else SplitMode.SANDWICH
+        
+        # 🛡️ 改為向 Entry 元件直接要字串
         try:
-            min_slice = int(self._min_slice_var.get())
+            min_slice = int(self._min_slice_entry.get().strip())
             if min_slice <= 0:
                 min_slice = 10
         except ValueError:
             min_slice = 10
+        
+        # 🛡️ 終極無條件攔截：只要 Min Slice 大於 Focus，管你什麼模式一律當場逮捕！
+        if min_slice > focus:
+            messagebox.showwarning(
+                "設定衝突", 
+                f"最小切片 (Min Slice: {min_slice}m) 不能大於 專注時間 (Focus: {focus}m)！\n"
+                f"💡 請調整設定，確保 Focus 必須大於或等於 Min Slice。"
+            )
+            return
 
         blocks = scheduler.build_daily_blocks(slices, focus, brk, mode, min_slice_minutes=min_slice)
         
@@ -873,9 +889,8 @@ class DailyView(ctk.CTkFrame):
                                                     scrollbar_button_color=BORDER)
         self._task_scroll.pack(fill="both", expand=True)
 
-        # Right: timer
-        right = ctk.CTkScrollableFrame(body, fg_color=BG,
-                                        scrollbar_button_color=BORDER)
+        # Right: timer (🛡️ 終極解法：改成普通 Frame，徹底阻斷無限迴圈)
+        right = ctk.CTkFrame(body, fg_color=BG, corner_radius=0)
         right.grid(row=0, column=1, sticky="nsew")
         self.timer_panel = TimerPanel(right, self._app)
         self.timer_panel.pack(fill="both", expand=True)
