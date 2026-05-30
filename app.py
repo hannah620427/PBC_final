@@ -54,6 +54,19 @@ MONTHS = ["Jan","Feb","Mar","Apr","May","Jun",
 def week_start_of(d: date) -> date:
     return date.today()  # 改成永遠從「今天」開始
 
+def format_hm(minutes: float) -> str:
+    """將分鐘數轉換為 Xh Ym 的直覺格式"""
+    if minutes <= 0:
+        return "0m"
+    h = int(minutes // 60)
+    m = int(minutes % 60)
+    if h > 0 and m > 0:
+        return f"{h}h {m}m"
+    elif h > 0:
+        return f"{h}h"
+    else:
+        return f"{m}m"
+
 def fmt_sec(s: int) -> str:
     return f"{s // 60:02d}:{s % 60:02d}"
 
@@ -63,6 +76,7 @@ def next_21_days(from_date: Optional[date] = None) -> List[date]:
 
 def date_label(d: date) -> str:
     return f"{DAYS_S[d.weekday()]}  {d.strftime('%b %d')}"
+
 
 
 # ── Reusable widgets ──────────────────────────────────────────────────────────
@@ -944,7 +958,7 @@ class DailyView(ctk.CTkFrame):
         # ─────────────────────────────────────────────────────────────────
 
         body_label(right_info,
-                   f"({t.time_allocation*60:.0f}m / {t.remaining_minutes:.0f}m)  ·  "
+                   f"({format_hm(t.time_allocation*60)} / {format_hm(t.remaining_minutes)})  ·  "
                    f"dl {t.deadline.strftime('%b %d')}",
                    color=T2, size=11).pack(side="right")
 
@@ -954,7 +968,7 @@ class DailyView(ctk.CTkFrame):
                 sc = OK_CLR if st.completed else T2
                 sm = "✓" if st.completed else "·"
                 body_label(row, f"     {sm}  {st.name}  "
-                           f"({st.estimated_minutes:.0f}m / {st.remaining_minutes:.0f}m)",
+                           f"({format_hm(st.estimated_minutes)} / {format_hm(st.remaining_minutes)})",
                            color=sc, size=11).pack(anchor="w",
                                                     padx=16, pady=1)
             ctk.CTkFrame(row, height=6, fg_color="transparent").pack()
@@ -1451,6 +1465,81 @@ class WeeklyView(ctk.CTkFrame):
             body, fg_color=BG, scrollbar_button_color=BORDER)
         self._task_list_scroll.grid(row=0, column=1, sticky="nsew")
 
+    def _render_task_list(self, tasks):
+        """專責繪製右側代辦事項清單，統一排版與視覺層級"""
+        for w in self._task_list_scroll.winfo_children():
+            w.destroy()
+            
+        section_label(self._task_list_scroll, "TASKS & DEADLINES").pack(anchor="w", pady=(12, 8))
+        
+        if not tasks:
+            body_label(self._task_list_scroll, "No pending tasks.", color=T2).pack(pady=10)
+            return
+
+        tasks_sorted = sorted(tasks, key=lambda x: x.deadline)
+        
+        for t in tasks_sorted:
+            t_card = card_frame(self._task_list_scroll)
+            t_card.configure(fg_color=QUAD_CLR.get(t.quadrant.value, CARD))
+            t_card.pack(fill="x", pady=4)
+            
+            # --- 第一列：名稱與靠右對齊的操作按鈕 ---
+            top_row = ctk.CTkFrame(t_card, fg_color="transparent")
+            top_row.pack(fill="x", padx=12, pady=(8, 2))
+            
+            body_label(top_row, t.name, size=13).pack(side="left")
+            
+            btn_frame = ctk.CTkFrame(top_row, fg_color="transparent")
+            btn_frame.pack(side="right")
+            
+            ctk.CTkButton(btn_frame, text="⋯", width=28, height=24,
+                          fg_color="transparent", hover_color=ARC_BG, text_color=T2,
+                          font=ctk.CTkFont(size=14), corner_radius=6,
+                          command=lambda task=t: EditTaskDialog(self._app, task, self.refresh)
+            ).pack(side="right")
+
+            toggle_btn = ctk.CTkButton(btn_frame, text="+", width=24, height=24,
+                                       fg_color=BORDER, hover_color=ARC_BG, text_color=T1,
+                                       font=ctk.CTkFont(size=14, weight="bold"), corner_radius=6)
+            toggle_btn.pack(side="right", padx=(0, 4))
+            
+            # --- 第二列：動態死線顏色與轉換後的時數 ---
+            info_row = ctk.CTkFrame(t_card, fg_color="transparent")
+            info_row.pack(fill="x", padx=12, pady=(0, 6))
+            
+            # 動態計算死線壓力顏色
+            days_left = (t.deadline - self._app.today).days
+            if days_left > 7:
+                dl_color = T2              # 灰色 (安全)
+            elif days_left > 3:
+                dl_color = "#E3B341"       # 橘黃色 (警告)
+            else:
+                dl_color = ERR_CLR         # 紅色 (緊急)
+
+            dl_str = t.deadline.strftime('%b %d (%a)')
+            body_label(info_row, f"DL: {dl_str}", color=dl_color, size=11).pack(side="left")
+            
+            # 使用我們新加的 format_hm 工具
+            time_str = f"({format_hm(t.time_allocation*60)} / {format_hm(t.remaining_minutes)})"
+            body_label(info_row, time_str, color=T2, size=11).pack(side="right")
+            
+            # --- 第三列：隱藏的子任務 ---
+            sub_container = ctk.CTkFrame(t_card, fg_color="transparent")
+            if t.subtasks:
+                ctk.CTkFrame(sub_container, height=1, fg_color=BORDER).pack(fill="x", pady=(0, 6))
+                for st in t.subtasks:
+                    sub_item = ctk.CTkFrame(sub_container, fg_color="transparent")
+                    sub_item.pack(fill="x", pady=2)
+                    sm, color = ("✓", OK_CLR) if st.completed else ("·", T2)
+                    body_label(sub_item, f"  {sm} {st.name}", color=color, size=11).pack(side="left")
+                    body_label(sub_item, f"({format_hm(st.estimated_minutes)} / {format_hm(st.remaining_minutes)})", color=T2, size=11).pack(side="right")
+                    
+                def make_toggle(c=sub_container, b=toggle_btn):
+                    return lambda: (c.pack(fill="x", padx=12, pady=(0, 8)), b.configure(text="-")) if not c.winfo_manager() else (c.pack_forget(), b.configure(text="+"))
+                toggle_btn.configure(command=make_toggle())
+            else:
+                toggle_btn.pack_forget()
+
     def refresh(self):
         ws = self._app.week_start
         self._week_lbl.configure(
@@ -1470,8 +1559,10 @@ class WeeklyView(ctk.CTkFrame):
         if not entries:
             msg = card_frame(self._schedule_scroll)
             msg.pack(fill="x", pady=20)
-            body_label(msg, "No schedule yet. Click '+ Add Task' to begin.",
-                       color=T2).pack(pady=20)
+            body_label(msg, "No schedule yet. Add a task to begin.", color=T2).pack(pady=(24, 12))
+            ctk.CTkButton(msg, text="+ Add Task", width=140, height=36,
+                          fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF", font=ctk.CTkFont(size=13),
+                          command=self._add_task).pack(pady=(0, 24))
         else:
             for d in work_days:
                 ds      = d.isoformat()
@@ -1512,86 +1603,14 @@ class WeeklyView(ctk.CTkFrame):
                             command=lambda task=t: EditTaskDialog(self._app, task, self.refresh),
                         ).pack(side="right", padx=(4, 0))
 
-                        body_label(right_w, f"{e['allocated_minutes']:.0f}m  [{t.quadrant.value}]  P={t.priority_score:.1f}",
+                        body_label(right_w, format_hm(e['allocated_minutes']),
                                    color=T2, size=11).pack(side="right")
 
                 ctk.CTkFrame(day_card, height=8, fg_color="transparent").pack()
             
-        # ==========================================
-        # ---- 更新右側「代辦事項清單」資料 ----
-        # ==========================================
-        for w in self._task_list_scroll.winfo_children():
-            w.destroy()
-            
-        section_label(self._task_list_scroll, "TASKS & DEADLINES").pack(anchor="w", pady=(12, 8))
-        
+        # 直接呼叫新的渲染函式 (大幅精簡程式碼)
         tasks = db.get_all_tasks(week_start=ws, completed=False)
-        
-        if not tasks:
-            body_label(self._task_list_scroll, "No pending tasks.", color=T2).pack(pady=10)
-        else:
-            tasks_sorted = sorted(tasks, key=lambda x: x.deadline)
-
-            for t in tasks_sorted:
-                t_card = card_frame(self._task_list_scroll)
-                t_card.configure(fg_color=QUAD_CLR.get(t.quadrant.value, CARD))  #Claude修正
-                t_card.pack(fill="x", pady=4)
-                
-                top_row = ctk.CTkFrame(t_card, fg_color="transparent")
-                top_row.pack(fill="x", padx=12, pady=(8, 2))
-                
-                # 任務名稱 (排在最左邊)
-                body_label(top_row, t.name, size=13).pack(side="left")
-
-                # [+] 展開折疊按鈕 (緊接在任務名稱的右邊)
-                toggle_btn = ctk.CTkButton(
-                    top_row, text="+", width=24, height=24,
-                    fg_color=BORDER, hover_color=ARC_BG, text_color=T1,
-                    font=ctk.CTkFont(size=14, weight="bold"), corner_radius=6
-                )
-                toggle_btn.pack(side="left", padx=(8, 0))
-                
-                ctk.CTkButton(
-                    top_row, text="⋯", width=28, height=24,
-                    fg_color="transparent", hover_color=ARC_BG,
-                    text_color=T2, font=ctk.CTkFont(size=14),
-                    corner_radius=6,
-                    command=lambda task=t: EditTaskDialog(self._app, task, self.refresh)
-                ).pack(side="right")
-                
-                info_row = ctk.CTkFrame(t_card, fg_color="transparent")
-                info_row.pack(fill="x", padx=12, pady=(0, 6))
-                
-                dl_str = t.deadline.strftime('%b %d (%a)')
-                body_label(info_row, f"DL: {dl_str}", color=ERR_CLR, size=11).pack(side="left")
-                body_label(info_row, f"({t.time_allocation*60:.0f}m / {t.remaining_minutes:.0f}m)", color=T2, size=11).pack(side="right")
-                
-                sub_container = ctk.CTkFrame(t_card, fg_color="transparent")
-                
-                if t.subtasks:
-                    ctk.CTkFrame(sub_container, height=1, fg_color=BORDER).pack(fill="x", pady=(0, 6))
-                    
-                    for st in t.subtasks:
-                        sub_item = ctk.CTkFrame(sub_container, fg_color="transparent")
-                        sub_item.pack(fill="x", pady=2)
-                        
-                        sm = "✓" if st.completed else "·"
-                        color = OK_CLR if st.completed else T2
-                        body_label(sub_item, f"  {sm} {st.name}", color=color, size=11).pack(side="left")
-                        body_label(sub_item, f"({st.estimated_minutes:.0f}m / {st.remaining_minutes:.0f}m)", color=T2, size=11).pack(side="right")
-                        
-                    def make_toggle(c=sub_container, b=toggle_btn):
-                        return lambda: (
-                            c.pack(fill="x", padx=12, pady=(0, 8)),
-                            b.configure(text="-")
-                        ) if not c.winfo_manager() else (
-                            c.pack_forget(),
-                            b.configure(text="+")
-                        )
-                    
-                    toggle_btn.configure(command=make_toggle())
-                else:
-                    toggle_btn.pack_forget()
+        self._render_task_list(tasks)
 
     def _add_task(self):
         AddTaskDialog(self._app, self._app.week_start, self.refresh)
@@ -1635,90 +1654,9 @@ class WeeklyView(ctk.CTkFrame):
                     self._app.week_start, day_date, task_id, minutes)
         self.refresh()
             
-            # ==========================================
-        # ---- 新增：更新右側「代辦事項清單」資料 ----
-        # ==========================================
-        for w in self._task_list_scroll.winfo_children():
-            w.destroy()
-            
-        section_label(self._task_list_scroll, "TASKS & DEADLINES").pack(anchor="w", pady=(12, 8))
-        
-        # 取得本週所有未完成任務 (修正 ws 變數錯誤)
+        # 取得本週所有未完成任務並重新繪製右側清單
         tasks = db.get_all_tasks(week_start=self._app.week_start, completed=False)
-        
-        if not tasks:
-            body_label(self._task_list_scroll, "No pending tasks.", color=T2).pack(pady=10)
-        else:
-            # 自動依照死線 (Deadline) 進行排序，越急的排越上面
-            tasks_sorted = sorted(tasks, key=lambda x: x.deadline)
-            
-            for t in tasks_sorted:
-                t_card = card_frame(self._task_list_scroll)
-                t_card.pack(fill="x", pady=4)
-                
-                # ---- 第一列 (包含展開按鈕、任務名稱與編輯按鈕) ----
-                top_row = ctk.CTkFrame(t_card, fg_color="transparent")
-                top_row.pack(fill="x", padx=12, pady=(8, 2))
-                
-                # 任務名稱 (排在最左邊)
-                body_label(top_row, t.name, size=13).pack(side="left")
-
-                # [+] 展開折疊按鈕 (緊接在任務名稱的右邊)
-                toggle_btn = ctk.CTkButton(
-                    top_row, text="+", width=24, height=24,
-                    fg_color=BORDER, hover_color=ARC_BG, text_color=T1,
-                    font=ctk.CTkFont(size=14, weight="bold"), corner_radius=6
-                )
-                toggle_btn.pack(side="left", padx=(8, 0))
-                
-                # ⋯ 編輯按鈕 (靠最右)
-                ctk.CTkButton(
-                    top_row, text="⋯", width=28, height=24,
-                    fg_color="transparent", hover_color=ARC_BG,
-                    text_color=T2, font=ctk.CTkFont(size=14),
-                    corner_radius=6,
-                    command=lambda task=t: EditTaskDialog(self._app, task, self.refresh)
-                ).pack(side="right")
-                
-                # ---- 第二列 (死線與大任務剩餘時間) ----
-                info_row = ctk.CTkFrame(t_card, fg_color="transparent")
-                info_row.pack(fill="x", padx=12, pady=(0, 6))
-                
-                dl_str = t.deadline.strftime('%b %d (%a)')
-                body_label(info_row, f"DL: {dl_str}", color=ERR_CLR, size=11).pack(side="left")
-                body_label(info_row, f"({t.time_allocation*60:.0f}m / {t.remaining_minutes:.0f}m)", color=T2, size=11).pack(side="right")
-                
-                # ---- 第三列 (隱藏的子任務容器，預設不展開) ----
-                sub_container = ctk.CTkFrame(t_card, fg_color="transparent")
-                
-                if t.subtasks:
-                    # 畫出一條淡淡的分隔線讓視覺更清楚
-                    ctk.CTkFrame(sub_container, height=1, fg_color=BORDER).pack(fill="x", pady=(0, 6))
-                    
-                    # 填入所有子任務
-                    for st in t.subtasks:
-                        sub_item = ctk.CTkFrame(sub_container, fg_color="transparent")
-                        sub_item.pack(fill="x", pady=2)
-                        
-                        sm = "✓" if st.completed else "·"
-                        color = OK_CLR if st.completed else T2
-                        body_label(sub_item, f"  {sm} {st.name}", color=color, size=11).pack(side="left")
-                        body_label(sub_item, f"({st.estimated_minutes:.0f}m / {st.remaining_minutes:.0f}m)", color=T2, size=11).pack(side="right")
-                        
-                    # 設定按鈕切換邏輯
-                    def make_toggle(c=sub_container, b=toggle_btn):
-                        return lambda: (
-                            c.pack(fill="x", padx=12, pady=(0, 8)),
-                            b.configure(text="-")
-                        ) if not c.winfo_manager() else (
-                            c.pack_forget(),
-                            b.configure(text="+")
-                        )
-                    
-                    toggle_btn.configure(command=make_toggle())
-                else:
-                    # 若完全沒有子任務，直接把展開按鈕隱藏
-                    toggle_btn.pack_forget()
+        self._render_task_list(tasks)
 
     def _add_task(self):
         AddTaskDialog(self._app, self._app.week_start, self.refresh)
@@ -1800,6 +1738,12 @@ class AddTaskDialog(ctk.CTkToplevel):
         scroll.pack(fill="both", expand=True, padx=20, pady=(16, 0))
 
         heading(scroll, "New Task", size=16).pack(anchor="w", pady=(0, 4))
+        # --- 新增：行內警告提示區塊 (預設隱藏) ---
+        self._error_lbl = ctk.CTkLabel(scroll, text="", text_color="#FFF", fg_color=ERR_CLR, 
+                                       corner_radius=6, height=30, font=ctk.CTkFont(size=12, weight="bold"))
+        # ----------------------------------------
+        
+        Divider(scroll).pack(fill="x", pady=8)
         Divider(scroll).pack(fill="x", pady=8)
 
         # Name
@@ -1814,24 +1758,30 @@ class AddTaskDialog(ctk.CTkToplevel):
         self._urg_lbl = body_label(scroll, "3 / 5", color=T2, size=11)
         self._urg_lbl.pack(anchor="w")
         self._urg_var = tk.IntVar(value=3)
-        ctk.CTkSlider(scroll, from_=1, to=5, number_of_steps=4,
-                      variable=self._urg_var, button_color=T1,
-                      progress_color=T1,
-                      command=lambda v: self._urg_lbl.configure(
-                          text=f"{int(v)} / 5")).pack(fill="x",
-                                                       pady=(0, 10))
+        
+        urg_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        urg_row.pack(fill="x", pady=(0, 10))
+        body_label(urg_row, "Low", color=T2, size=11).pack(side="left", padx=(0, 8))
+        ctk.CTkSlider(urg_row, from_=1, to=5, number_of_steps=4,
+                      variable=self._urg_var, button_color=T1, progress_color=T1,
+                      command=lambda v: self._urg_lbl.configure(text=f"{int(v)} / 5")
+                     ).pack(side="left", fill="x", expand=True)
+        body_label(urg_row, "High", color=T2, size=11).pack(side="left", padx=(8, 0))
 
         # Importance
-        section_label(scroll, "IMPORTANCE").pack(anchor="w")
+        section_label(scroll, "IMPORTANCE").pack(anchor="w", pady=(6, 0))
         self._imp_lbl = body_label(scroll, "3 / 5", color=T2, size=11)
         self._imp_lbl.pack(anchor="w")
         self._imp_var = tk.IntVar(value=3)
-        ctk.CTkSlider(scroll, from_=1, to=5, number_of_steps=4,
-                      variable=self._imp_var, button_color=T1,
-                      progress_color=T1,
-                      command=lambda v: self._imp_lbl.configure(
-                          text=f"{int(v)} / 5")).pack(fill="x",
-                                                       pady=(0, 10))
+        
+        imp_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        imp_row.pack(fill="x", pady=(0, 10))
+        body_label(imp_row, "Low", color=T2, size=11).pack(side="left", padx=(0, 8))
+        ctk.CTkSlider(imp_row, from_=1, to=5, number_of_steps=4,
+                      variable=self._imp_var, button_color=T1, progress_color=T1,
+                      command=lambda v: self._imp_lbl.configure(text=f"{int(v)} / 5")
+                     ).pack(side="left", fill="x", expand=True)
+        body_label(imp_row, "High", color=T2, size=11).pack(side="left", padx=(8, 0))
 
         # Hours
         section_label(scroll, "ESTIMATED HOURS").pack(anchor="w")
@@ -1964,24 +1914,26 @@ class AddTaskDialog(ctk.CTkToplevel):
         self._sub_mins.delete(0, "end")
 
     def _save(self):
+        # --- 內部函式：顯示行內警告 ---
+        def show_error(msg):
+            self._error_lbl.configure(text=f" ⚠ {msg} ")
+            # ❗把這行的 scroll 替換成 self._error_lbl.master
+            self._error_lbl.pack(fill="x", pady=(0, 10), after=self._error_lbl.master.winfo_children()[0])
+            self.after(4000, lambda: self._error_lbl.pack_forget()) # 4秒後自動消失
+
         name = self._name.get().strip()
         if not name:
-            messagebox.showwarning("Missing", "Task name is required.", parent=self)
+            show_error("Task name is required.")
             return
         try:
             hours = float(self._hours.get())
         except ValueError:
-            messagebox.showwarning("Invalid", "Hours must be a number.", parent=self)
+            show_error("Estimated hours must be a valid number.")
             return
 
-        # 子任務總時間驗證
         total_sub_mins = sum(s["minutes"] for s in self._subtasks)
         if total_sub_mins > hours * 60:
-            messagebox.showwarning(
-                "Sub-task Time Exceeded",
-                f"Sub-task total ({total_sub_mins:.0f}m) exceeds task time ({hours*60:.0f}m).\n"
-                f"Please increase task hours or reduce sub-task times.",
-                parent=self)
+            show_error(f"Sub-task total ({total_sub_mins:.0f}m) exceeds task time ({hours*60:.0f}m).")
             return
 
         if db.task_in_week_by_name(name, self._week_start):
