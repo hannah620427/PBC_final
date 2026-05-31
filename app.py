@@ -1466,6 +1466,117 @@ class EditTaskDialog(ctk.CTkToplevel):
             self._on_done()
 
 
+# ── Difficulty Review Dialog ──────────────────────────────────────────────────
+
+class DifficultyReviewDialog(ctk.CTkToplevel):
+    LABELS = {
+        0: "輕鬆 (trivially easy)",
+        1: "容易 (easy)",
+        2: "適中 (about right)",
+        3: "稍難 (a bit tough)",
+        4: "困難 (hard)",
+        5: "極難 (brutal)",
+    }
+
+    def __init__(self, app, week_start: date, on_done=None):
+        super().__init__(app)
+        self.title("上週難度回顧 Difficulty Review")
+        self.geometry("520x540")
+        self.resizable(False, True)
+        self.grab_set()
+        self.configure(fg_color=BG)
+
+        self._app        = app
+        self._on_done    = on_done
+        self._week_start = week_start
+
+        last_week = week_start - timedelta(weeks=1)
+        tasks_raw = db.get_tasks_from_week(last_week)
+
+        seen: set = set()
+        self._tasks: List[Task] = []
+        for t in tasks_raw:
+            key = t.name.strip().lower()
+            if key not in seen:
+                seen.add(key)
+                self._tasks.append(t)
+
+        self._vars: Dict[int, tk.IntVar] = {}
+        self._build()
+
+    def _build(self):
+        if not self._tasks:
+            heading(self, "上週沒有找到任務", size=15).pack(pady=40)
+            ctk.CTkButton(self, text="關閉", fg_color=T1, hover_color=SIDE_SEL,
+                          text_color="#FFF", height=38, command=self.destroy
+                          ).pack(padx=24, pady=12, fill="x")
+            return
+
+        heading(self, "上週任務難度回顧", size=16).pack(anchor="w", padx=24, pady=(20, 2))
+        body_label(self,
+                   "替每個任務打一個難度分數，下次新增同名任務時系統會自動建議時數。",
+                   color=T2, size=12).pack(anchor="w", padx=24, pady=(0, 4))
+        body_label(self, "0 = 超輕鬆  ·  2 = 剛好  ·  5 = 超硬",
+                   color=T2, size=11).pack(anchor="w", padx=24, pady=(0, 12))
+        Divider(self).pack(fill="x", padx=24, pady=(0, 12))
+
+        scroll = ctk.CTkScrollableFrame(self, fg_color=BG,
+                                        scrollbar_button_color=BORDER)
+        scroll.pack(fill="both", expand=True, padx=24, pady=(0, 8))
+
+        for t in self._tasks:
+            var = tk.IntVar(value=2)
+            self._vars[t.id] = var
+
+            card = card_frame(scroll)
+            card.pack(fill="x", pady=5)
+            inner = ctk.CTkFrame(card, fg_color="transparent")
+            inner.pack(fill="x", padx=14, pady=(10, 4))
+
+            name_row = ctk.CTkFrame(inner, fg_color="transparent")
+            name_row.pack(fill="x")
+            body_label(name_row, t.name, size=13).pack(side="left")
+            body_label(name_row, f"  {t.time_allocation}h", color=T2, size=12).pack(side="left")
+
+            diff_lbl = body_label(inner, self.LABELS[2], color=T2, size=11)
+            diff_lbl.pack(anchor="w", pady=(2, 4))
+
+            def _make_cmd(lbl, v):
+                def cmd(val):
+                    score = int(float(val))
+                    lbl.configure(text=self.LABELS.get(score, ""))
+                    v.set(score)
+                return cmd
+
+            ctk.CTkSlider(
+                inner, from_=0, to=5, number_of_steps=5,
+                variable=var, button_color=T1, progress_color=T1,
+                command=_make_cmd(diff_lbl, var)
+            ).pack(fill="x", pady=(0, 8))
+
+        Divider(self).pack(fill="x", padx=24, pady=(4, 0))
+        ctk.CTkButton(
+            self, text="儲存難度回顧",
+            fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
+            font=ctk.CTkFont(size=13), height=42,
+            command=self._save
+        ).pack(padx=24, pady=16, fill="x")
+
+    def _save(self):
+        last_week = self._week_start - timedelta(weeks=1)
+        for t in self._tasks:
+            score = self._vars[t.id].get()
+            db.log_difficulty(t.name, last_week, score)
+        messagebox.showinfo(
+            "已儲存",
+            f"✓ 已記錄 {len(self._tasks)} 個任務的難度分數。\n"
+            f"下次新增同名任務時，系統將自動建議時數。",
+            parent=self,
+        )
+        self.destroy()
+        if self._on_done:
+            self._on_done()
+            
 # ── Weekly View ───────────────────────────────────────────────────────────────
 
 class WeeklyView(ctk.CTkFrame):
@@ -1492,6 +1603,11 @@ class WeeklyView(ctk.CTkFrame):
                       fg_color=T1, hover_color=SIDE_SEL, text_color="#FFF",
                       font=ctk.CTkFont(size=12), corner_radius=8,
                       command=self._add_task).pack(side="right", padx=8)
+        ctk.CTkButton(hdr, text="📊 Review", width=100, height=32,
+                      fg_color=CARD, hover_color=ARC_BG, text_color=T1,
+                      font=ctk.CTkFont(size=12), corner_radius=8,
+                      border_width=1, border_color=BORDER,
+                      command=self._difficulty_review).pack(side="right", padx=(0, 8))
                       
         self._hours_var = ctk.StringVar(value=f"{self._app.hours_per_day:g}")
         hours_entry = ctk.CTkEntry(hdr, width=55, textvariable=self._hours_var, justify="center")
@@ -1739,6 +1855,17 @@ class WeeklyView(ctk.CTkFrame):
 
     def _add_task(self):
         AddTaskDialog(self._app, self._app.week_start, self.refresh)
+    def _difficulty_review(self):
+        last_week = self._app.week_start - timedelta(weeks=1)
+        tasks = db.get_tasks_from_week(last_week)
+        if not tasks:
+            messagebox.showinfo(
+                "沒有上週資料",
+                "找不到上週的任務記錄。\n請先完成一週的排程後再來回顧。",
+                parent=self._app,
+            )
+            return
+        DifficultyReviewDialog(self._app, self._app.week_start, on_done=self.refresh)
 
     def _regen(self):
         try:
@@ -2768,7 +2895,8 @@ class IntroScreen(ctk.CTkToplevel):
         "最短時間（min slice），避免切換太碎；適合把零碎小事一次清掉。",
 
         "SMART TOUCHES（貼心設計）\n"                                       #Claude修正
-        "• 難度記憶：完成後記錄難度，下週同名任務會據此微調建議時數。\n"
+        "• 難度記憶：在 Weekly 頁面按「📊 Review」，替上週任務評分（0–5）；"
+        "下次新增同名任務時，系統會依難度自動建議時數（難 → 加時，易 → 減時）。\n"
         "• 死線壓力：越接近死線的任務，優先序會動態升高。\n"
         "• 隔日結轉：每天結束的報告可把未完成任務自動帶到明天。\n"
         "• 進度回填：在完成視窗用滑桿回報各任務／子任務的完成百分比，"
