@@ -41,7 +41,7 @@ MONTHS = ["Jan","Feb","Mar","Apr","May","Jun",
 
 # ── Utility ───────────────────────────────────────────────────────────────────
 def week_start_of(d: date) -> date:
-    return date.today()  # 改成永遠從「今天」開始
+    return d - timedelta(days=d.weekday())
 
 def fmt_sec(s: int) -> str:
     return f"{s // 60:02d}:{s % 60:02d}"
