@@ -60,7 +60,7 @@ def prompt_time(prompt: str) -> str:
         print(" ❌ Format: HH:MM (e.g. 09:30)")
 
 def week_start_of(d: date) -> date:
-    return date.today()
+    return d - timedelta(days=d.weekday())
 
 # ==========================================
 # Day Picker
