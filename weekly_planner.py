@@ -467,13 +467,6 @@ def generate_schedule(week_start: date, hours_per_day: float) -> bool:
         return False
         
     db.clear_schedule_for_week(week_start)
-
-    # --- [除錯探照燈] ---
-    print("\n--- DEBUG START ---")
-    print("型別是:", type(allocation))
-    print("內容是:", allocation)
-    print("--- DEBUG END ---\n")
-    # -------------------
         
     for day_date, entries in allocation.items():
         for task_id, minutes in entries:
